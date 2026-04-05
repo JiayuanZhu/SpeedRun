@@ -19,12 +19,11 @@ canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 // Track definition: outer ellipse and inner ellipse (road between them)
-// Center of the track in world space
 const TRACK_CX = 0;
 const TRACK_CY = 0;
-const TRACK_RX_OUTER = 700;  // outer x-radius
-const TRACK_RY_OUTER = 380;  // outer y-radius
-const TRACK_WIDTH = 120;     // road width
+const TRACK_RX_OUTER = 700;
+const TRACK_RY_OUTER = 380;
+const TRACK_WIDTH = 120;
 const TRACK_RX_INNER = TRACK_RX_OUTER - TRACK_WIDTH;
 const TRACK_RY_INNER = TRACK_RY_OUTER - TRACK_WIDTH;
 const KERB_WIDTH = 18;
@@ -32,14 +31,16 @@ const KERB_WIDTH = 18;
 // Player car
 const car = {
   x: TRACK_CX,
-  y: -(TRACK_RY_OUTER - TRACK_WIDTH / 2), // top of track
-  angle: 0,      // heading in radians, 0 = right
-  vx: 0,         // world-space velocity x
-  vy: 0,         // world-space velocity y
-  angularVel: 0, // rotational velocity
+  y: -(TRACK_RY_OUTER - TRACK_WIDTH / 2),
+  angle: 0,
+  vx: 0,
+  vy: 0,
+  angularVel: 0,
   onTrack: true,
   width: 28,
   height: 14,
+  drifting: false,
+  driftBoostTimer: 0,
 };
 
 // Camera
@@ -47,8 +48,15 @@ const cam = { x: 0, y: 0 };
 
 // Keys
 const keys = {};
-document.addEventListener('keydown', e => keys[e.key] = true);
-document.addEventListener('keyup',   e => keys[e.key] = false);
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ') e.preventDefault(); // prevent page scroll
+});
+document.addEventListener('keyup', e => keys[e.key] = false);
+
+// Tire marks: { x, y, alpha }
+const tireMarks = [];
+const TIRE_MARK_LIFE = 120; // frames until fully faded (~2s at 60fps)
 
 // Build ellipse path helper
 function ellipsePath(cx, cy, rx, ry) {
@@ -56,18 +64,17 @@ function ellipsePath(cx, cy, rx, ry) {
   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
 }
 
-// Draw track layers in world space (camera already applied via transform)
 function drawTrack() {
-  // Grass background (large green fill)
+  // Grass background
   ctx.fillStyle = '#3a8c3a';
   ctx.fillRect(-5000, -5000, 10000, 10000);
 
-  // Infield grass (inside inner ellipse)
+  // Infield grass
   ellipsePath(TRACK_CX, TRACK_CY, TRACK_RX_INNER - KERB_WIDTH, TRACK_RY_INNER - KERB_WIDTH);
   ctx.fillStyle = '#3a8c3a';
   ctx.fill();
 
-  // Outer kerb (red/white striped ring)
+  // Outer kerb
   drawKerb(TRACK_RX_OUTER, TRACK_RY_OUTER, KERB_WIDTH, true);
 
   // Inner kerb
@@ -83,7 +90,6 @@ function drawTrack() {
 
   // Start/finish line
   ctx.save();
-  ctx.fillStyle = '#fff';
   const sfX = TRACK_CX;
   const sfY = -(TRACK_RY_OUTER - KERB_WIDTH);
   const sfH = TRACK_WIDTH - KERB_WIDTH * 2;
@@ -94,7 +100,6 @@ function drawTrack() {
   ctx.restore();
 }
 
-// Draw a kerb ring (alternating red/white segments)
 function drawKerb(rx, ry, w, outer) {
   const segments = 40;
   for (let i = 0; i < segments; i++) {
@@ -114,6 +119,15 @@ function drawKerb(rx, ry, w, outer) {
   }
 }
 
+function drawTireMarks() {
+  for (const m of tireMarks) {
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(10,10,10,${m.alpha * 0.8})`;
+    ctx.fill();
+  }
+}
+
 function drawCar() {
   ctx.save();
   ctx.translate(car.x, car.y);
@@ -123,7 +137,7 @@ function drawCar() {
   const h = car.height;
 
   // Car body
-  ctx.fillStyle = '#e10600'; // F1 red
+  ctx.fillStyle = '#e10600';
   ctx.beginPath();
   ctx.moveTo(w / 2, 0);
   ctx.lineTo(w / 4, -h / 2);
@@ -132,6 +146,17 @@ function drawCar() {
   ctx.lineTo(w / 4, h / 2);
   ctx.closePath();
   ctx.fill();
+
+  // Drift/boost outline
+  if (car.drifting) {
+    ctx.strokeStyle = '#ff0';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  } else if (car.driftBoostTimer > 0) {
+    ctx.strokeStyle = '#0cf';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 
   // Cockpit
   ctx.fillStyle = '#111';
@@ -149,19 +174,24 @@ function drawCar() {
 }
 
 // Physics constants
-const ACCEL          = 0.28;   // acceleration force per frame
-const BRAKE_FORCE    = 0.45;   // braking deceleration per frame
-const MAX_SPEED_ROAD = 8.5;    // max speed on road
-const MAX_SPEED_GRASS= 3.5;    // max speed on grass
-const FRICTION_ROAD  = 0.987;  // longitudinal drag on road
-const FRICTION_GRASS = 0.93;   // heavy drag on grass
-const GRIP_ROAD      = 0.85;   // lateral velocity retained on road (lower = more grip)
-const GRIP_GRASS     = 0.65;   // less grip on grass (more sliding)
-const TURN_ACCEL     = 0.003;  // angular acceleration per frame
-const TURN_MAX       = 0.048;  // max angular velocity
-const ANGULAR_DAMP   = 0.80;   // angular velocity damping when not steering
+const ACCEL           = 0.28;
+const BRAKE_FORCE     = 0.45;
+const MAX_SPEED_ROAD  = 8.5;
+const MAX_SPEED_GRASS = 3.5;
+const FRICTION_ROAD   = 0.987;
+const FRICTION_GRASS  = 0.93;
+const GRIP_ROAD       = 0.85;   // lateral velocity retained (lower = more grip)
+const GRIP_GRASS      = 0.65;
+const GRIP_DRIFT      = 0.982;  // very low correction = significant sideways slide
+const TURN_ACCEL      = 0.003;
+const TURN_MAX        = 0.048;
+const TURN_ACCEL_DRIFT = 0.006; // sharper steering during drift
+const TURN_MAX_DRIFT   = 0.068;
+const ANGULAR_DAMP    = 0.80;
+const BOOST_DURATION  = 90;     // frames (1.5s at 60fps)
+const BOOST_ACCEL     = 0.22;   // auto-push during boost
+const BOOST_MAX_SPEED = MAX_SPEED_ROAD * 1.3;
 
-// Returns true if world point (x,y) is on the asphalt (between inner and outer ellipses)
 function isOnTrack(x, y) {
   const outerNorm = (x / TRACK_RX_OUTER) ** 2 + (y / TRACK_RY_OUTER) ** 2;
   const innerNorm = (x / TRACK_RX_INNER) ** 2 + (y / TRACK_RY_INNER) ** 2;
@@ -173,66 +203,105 @@ function update() {
   const down  = keys['s'] || keys['S'] || keys['ArrowDown'];
   const left  = keys['a'] || keys['A'] || keys['ArrowLeft'];
   const right = keys['d'] || keys['D'] || keys['ArrowRight'];
+  const driftKey = keys[' '] || keys['Shift'];
 
   car.onTrack = isOnTrack(car.x, car.y);
 
   const maxSpeed = car.onTrack ? MAX_SPEED_ROAD : MAX_SPEED_GRASS;
   const friction = car.onTrack ? FRICTION_ROAD  : FRICTION_GRASS;
-  const grip     = car.onTrack ? GRIP_ROAD      : GRIP_GRASS;
 
-  // Current speed (signed, along heading)
-  const headX  = Math.cos(car.angle);
-  const headY  = Math.sin(car.angle);
+  const speed = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
+  const headX = Math.cos(car.angle);
+  const headY = Math.sin(car.angle);
   const fwdSpd = car.vx * headX + car.vy * headY;
 
-  // Angular velocity steering — scales with forward speed for realistic feel
+  // Drift: requires drift key + steering + enough speed + on track
+  const wasDrifting = car.drifting;
+  car.drifting = !!(driftKey && (left || right) && speed > 2 && car.onTrack);
+
+  // Trigger boost when drift ends
+  if (wasDrifting && !car.drifting) {
+    car.driftBoostTimer = BOOST_DURATION;
+  }
+  const boostActive = car.driftBoostTimer > 0;
+  if (boostActive) car.driftBoostTimer--;
+
+  // Effective max speed (boost raises the ceiling)
+  const effectiveMaxSpeed = boostActive ? BOOST_MAX_SPEED : maxSpeed;
+
+  // Steering — wider envelope during drift
+  const turnAccel = car.drifting ? TURN_ACCEL_DRIFT : TURN_ACCEL;
+  const turnMax   = car.drifting ? TURN_MAX_DRIFT   : TURN_MAX;
   const speedNorm = Math.min(Math.abs(fwdSpd) / 2, 1);
-  if (left)  car.angularVel = Math.max(car.angularVel - TURN_ACCEL, -TURN_MAX);
-  if (right) car.angularVel = Math.min(car.angularVel + TURN_ACCEL,  TURN_MAX);
+  if (left)  car.angularVel = Math.max(car.angularVel - turnAccel, -turnMax);
+  if (right) car.angularVel = Math.min(car.angularVel + turnAccel,  turnMax);
   if (!left && !right) car.angularVel *= ANGULAR_DAMP;
-  car.angularVel *= 0.88; // always damp slightly
+  car.angularVel *= 0.88;
   car.angle += car.angularVel * speedNorm;
 
-  // Acceleration along heading
-  if (up && fwdSpd < maxSpeed) {
-    const push = Math.min(ACCEL, maxSpeed - fwdSpd);
+  // Acceleration
+  if (up && fwdSpd < effectiveMaxSpeed) {
+    const push = Math.min(ACCEL, effectiveMaxSpeed - fwdSpd);
     car.vx += headX * push;
     car.vy += headY * push;
+  }
+
+  // Auto-push during boost (even without W)
+  if (boostActive && fwdSpd > 0 && fwdSpd < effectiveMaxSpeed) {
+    car.vx += headX * BOOST_ACCEL;
+    car.vy += headY * BOOST_ACCEL;
   }
 
   // Braking / reverse
   if (down) {
     if (fwdSpd > 0.1) {
-      // Braking while moving forward
       car.vx -= headX * BRAKE_FORCE;
       car.vy -= headY * BRAKE_FORCE;
     } else if (fwdSpd > -(maxSpeed * 0.4)) {
-      // Reverse
       car.vx += headX * (-ACCEL * 0.6);
       car.vy += headY * (-ACCEL * 0.6);
     }
   }
 
-  // Grip: reduce lateral (sideways) velocity — velocity gradually aligns to heading
-  const latX    = -headY;
-  const latY    =  headX;
-  const latSpd  = car.vx * latX + car.vy * latY;
+  // Lateral grip — drift suppresses correction for sideways sliding
+  const grip   = car.drifting ? GRIP_DRIFT : (car.onTrack ? GRIP_ROAD : GRIP_GRASS);
+  const latX   = -headY;
+  const latY   =  headX;
+  const latSpd = car.vx * latX + car.vy * latY;
   car.vx -= latX * latSpd * (1 - grip);
   car.vy -= latY * latSpd * (1 - grip);
 
-  // Longitudinal friction (drag)
+  // Longitudinal friction
   car.vx *= friction;
   car.vy *= friction;
 
-  // Clamp to max speed
+  // Clamp to effective max speed
   const curSpd = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
-  if (curSpd > maxSpeed) {
-    car.vx = (car.vx / curSpd) * maxSpeed;
-    car.vy = (car.vy / curSpd) * maxSpeed;
+  if (curSpd > effectiveMaxSpeed) {
+    car.vx = (car.vx / curSpd) * effectiveMaxSpeed;
+    car.vy = (car.vy / curSpd) * effectiveMaxSpeed;
   }
 
   car.x += car.vx;
   car.y += car.vy;
+
+  // Tire marks: record rear-wheel positions during drift
+  if (car.drifting) {
+    const cosA = Math.cos(car.angle);
+    const sinA = Math.sin(car.angle);
+    const rearX = car.x - cosA * (car.width * 0.45);
+    const rearY = car.y - sinA * (car.width * 0.45);
+    const offX  = sinA * (car.height * 0.38);
+    const offY  = cosA * (car.height * 0.38);
+    tireMarks.push({ x: rearX - offX, y: rearY + offY, alpha: 1 });
+    tireMarks.push({ x: rearX + offX, y: rearY - offY, alpha: 1 });
+  }
+
+  // Fade tire marks
+  for (let i = tireMarks.length - 1; i >= 0; i--) {
+    tireMarks[i].alpha -= 1 / TIRE_MARK_LIFE;
+    if (tireMarks[i].alpha <= 0) tireMarks.splice(i, 1);
+  }
 
   // Camera smoothly follows car
   cam.x += (car.x - cam.x) * 0.1;
@@ -243,21 +312,41 @@ function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   ctx.save();
-  // Center camera
   ctx.translate(canvas.width / 2 - cam.x, canvas.height / 2 - cam.y);
 
   drawTrack();
+  drawTireMarks();
   drawCar();
 
   ctx.restore();
 
-  // HUD
+  // HUD background
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(10, 10, 160, 36);
+  ctx.fillRect(10, 10, 200, 36);
   ctx.fillStyle = '#fff';
   ctx.font = '14px monospace';
   const dispSpd = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
   ctx.fillText(`Speed: ${(dispSpd * 60).toFixed(0)} km/h  ${car.onTrack ? '' : '[GRASS]'}`, 20, 32);
+
+  // Drift / boost status text
+  if (car.drifting) {
+    ctx.save();
+    ctx.font = 'bold 28px monospace';
+    ctx.fillStyle = '#ff0';
+    ctx.shadowColor = '#f80';
+    ctx.shadowBlur = 12;
+    ctx.fillText('DRIFT', canvas.width / 2 - 44, canvas.height - 40);
+    ctx.restore();
+  } else if (car.driftBoostTimer > 0) {
+    const alpha = car.driftBoostTimer / BOOST_DURATION;
+    ctx.save();
+    ctx.font = 'bold 24px monospace';
+    ctx.fillStyle = `rgba(0,220,255,${alpha})`;
+    ctx.shadowColor = '#0cf';
+    ctx.shadowBlur = 10;
+    ctx.fillText('BOOST!', canvas.width / 2 - 42, canvas.height - 40);
+    ctx.restore();
+  }
 }
 
 function loop() {
