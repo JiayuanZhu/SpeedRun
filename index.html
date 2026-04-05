@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SpeedRun - F1 Racing</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// Track definition: outer ellipse and inner ellipse (road between them)
+// Center of the track in world space
+const TRACK_CX = 0;
+const TRACK_CY = 0;
+const TRACK_RX_OUTER = 700;  // outer x-radius
+const TRACK_RY_OUTER = 380;  // outer y-radius
+const TRACK_WIDTH = 120;     // road width
+const TRACK_RX_INNER = TRACK_RX_OUTER - TRACK_WIDTH;
+const TRACK_RY_INNER = TRACK_RY_OUTER - TRACK_WIDTH;
+const KERB_WIDTH = 18;
+
+// Player car
+const car = {
+  x: TRACK_CX,
+  y: -(TRACK_RY_OUTER - TRACK_WIDTH / 2), // top of track
+  angle: 0,  // radians, 0 = right
+  speed: 0,
+  width: 28,
+  height: 14,
+};
+
+// Camera
+const cam = { x: 0, y: 0 };
+
+// Keys
+const keys = {};
+document.addEventListener('keydown', e => keys[e.key] = true);
+document.addEventListener('keyup',   e => keys[e.key] = false);
+
+// Build ellipse path helper
+function ellipsePath(cx, cy, rx, ry) {
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+}
+
+// Draw track layers in world space (camera already applied via transform)
+function drawTrack() {
+  // Grass background (large green fill)
+  ctx.fillStyle = '#3a8c3a';
+  ctx.fillRect(-5000, -5000, 10000, 10000);
+
+  // Infield grass (inside inner ellipse)
+  ellipsePath(TRACK_CX, TRACK_CY, TRACK_RX_INNER - KERB_WIDTH, TRACK_RY_INNER - KERB_WIDTH);
+  ctx.fillStyle = '#3a8c3a';
+  ctx.fill();
+
+  // Outer kerb (red/white striped ring)
+  drawKerb(TRACK_RX_OUTER, TRACK_RY_OUTER, KERB_WIDTH, true);
+
+  // Inner kerb
+  drawKerb(TRACK_RX_INNER, TRACK_RY_INNER, KERB_WIDTH, false);
+
+  // Road (asphalt)
+  ellipsePath(TRACK_CX, TRACK_CY, TRACK_RX_OUTER - KERB_WIDTH, TRACK_RY_OUTER - KERB_WIDTH);
+  ctx.fillStyle = '#555';
+  ctx.fill();
+  ellipsePath(TRACK_CX, TRACK_CY, TRACK_RX_INNER + KERB_WIDTH, TRACK_RY_INNER + KERB_WIDTH);
+  ctx.fillStyle = '#3a8c3a';
+  ctx.fill();
+
+  // Start/finish line
+  ctx.save();
+  ctx.fillStyle = '#fff';
+  const sfX = TRACK_CX;
+  const sfY = -(TRACK_RY_OUTER - KERB_WIDTH);
+  const sfH = TRACK_WIDTH - KERB_WIDTH * 2;
+  for (let i = 0; i < 6; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#fff' : '#000';
+    ctx.fillRect(sfX - 8, sfY + (sfH / 6) * i, 16, sfH / 6);
+  }
+  ctx.restore();
+}
+
+// Draw a kerb ring (alternating red/white segments)
+function drawKerb(rx, ry, w, outer) {
+  const segments = 40;
+  for (let i = 0; i < segments; i++) {
+    const a1 = (i / segments) * Math.PI * 2;
+    const a2 = ((i + 1) / segments) * Math.PI * 2;
+    ctx.beginPath();
+    if (outer) {
+      ctx.ellipse(TRACK_CX, TRACK_CY, rx, ry, 0, a1, a2);
+      ctx.ellipse(TRACK_CX, TRACK_CY, rx - w, ry - w, 0, a2, a1, true);
+    } else {
+      ctx.ellipse(TRACK_CX, TRACK_CY, rx + w, ry + w, 0, a1, a2);
+      ctx.ellipse(TRACK_CX, TRACK_CY, rx, ry, 0, a2, a1, true);
+    }
+    ctx.closePath();
+    ctx.fillStyle = i % 2 === 0 ? '#e00' : '#fff';
+    ctx.fill();
+  }
+}
+
+function drawCar() {
+  ctx.save();
+  ctx.translate(car.x, car.y);
+  ctx.rotate(car.angle);
+
+  const w = car.width;
+  const h = car.height;
+
+  // Car body
+  ctx.fillStyle = '#e10600'; // F1 red
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 0);
+  ctx.lineTo(w / 4, -h / 2);
+  ctx.lineTo(-w / 2, -h / 2);
+  ctx.lineTo(-w / 2, h / 2);
+  ctx.lineTo(w / 4, h / 2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cockpit
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-2, -h / 4, w / 3, h / 2);
+
+  // Front wing
+  ctx.fillStyle = '#ccc';
+  ctx.fillRect(w / 2 - 2, -h / 2 - 3, 6, h + 6);
+
+  // Rear wing
+  ctx.fillStyle = '#ccc';
+  ctx.fillRect(-w / 2 - 4, -h / 2 - 4, 6, h + 8);
+
+  ctx.restore();
+}
+
+const TURN_SPEED = 0.03;
+const ACCEL = 0.15;
+const BRAKE = 0.25;
+const MAX_SPEED = 6;
+const FRICTION = 0.97;
+
+function update() {
+  const up    = keys['w'] || keys['W'] || keys['ArrowUp'];
+  const down  = keys['s'] || keys['S'] || keys['ArrowDown'];
+  const left  = keys['a'] || keys['A'] || keys['ArrowLeft'];
+  const right = keys['d'] || keys['D'] || keys['ArrowRight'];
+
+  if (up)   car.speed = Math.min(car.speed + ACCEL, MAX_SPEED);
+  if (down) car.speed = Math.max(car.speed - BRAKE, -MAX_SPEED / 2);
+
+  if (left)  car.angle -= TURN_SPEED * (car.speed !== 0 ? 1 : 0);
+  if (right) car.angle += TURN_SPEED * (car.speed !== 0 ? 1 : 0);
+
+  car.speed *= FRICTION;
+
+  car.x += Math.cos(car.angle) * car.speed;
+  car.y += Math.sin(car.angle) * car.speed;
+
+  // Camera smoothly follows car
+  cam.x += (car.x - cam.x) * 0.1;
+  cam.y += (car.y - cam.y) * 0.1;
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  // Center camera
+  ctx.translate(canvas.width / 2 - cam.x, canvas.height / 2 - cam.y);
+
+  drawTrack();
+  drawCar();
+
+  ctx.restore();
+
+  // HUD
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(10, 10, 160, 36);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px monospace';
+  ctx.fillText(`Speed: ${Math.abs(car.speed * 60).toFixed(0)} km/h`, 20, 32);
+}
+
+function loop() {
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+});
+
+loop();
+</script>
+</body>
+</html>
