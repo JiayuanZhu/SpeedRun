@@ -44,7 +44,8 @@ const car = {
 };
 
 // Camera
-const cam = { x: 0, y: 0 };
+const cam = { x: 0, y: 0, angle: 0 };
+let cameraMode = 'follow'; // 'god' | 'follow'
 
 // Game state
 let gameState = 'countdown'; // 'countdown' | 'racing' | 'finished'
@@ -56,6 +57,7 @@ document.addEventListener('keydown', e => {
   keys[e.key] = true;
   if (e.key === ' ') e.preventDefault(); // prevent page scroll
   if (e.key === 'r' || e.key === 'R') restartGame();
+  if (e.key === 'v' || e.key === 'V') cameraMode = cameraMode === 'follow' ? 'god' : 'follow';
 });
 document.addEventListener('keyup', e => keys[e.key] = false);
 
@@ -419,6 +421,7 @@ function restartGame() {
   // Reset camera
   cam.x = car.x;
   cam.y = car.y;
+  cam.angle = car.angle;
 
   // Reset tire marks
   tireMarks.length = 0;
@@ -458,6 +461,14 @@ function restartGame() {
   countdownStart = performance.now();
 }
 
+function lerpCamAngle(t) {
+  let diff = car.angle - cam.angle;
+  // Normalize to [-PI, PI] to always take the short arc
+  while (diff >  Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  cam.angle += diff * t;
+}
+
 function update() {
   // Handle countdown phase
   if (gameState === 'countdown') {
@@ -471,6 +482,7 @@ function update() {
     // Fade camera to car start position during countdown
     cam.x += (car.x - cam.x) * 0.1;
     cam.y += (car.y - cam.y) * 0.1;
+    lerpCamAngle(0.1);
     return;
   }
 
@@ -602,6 +614,7 @@ function update() {
   // Camera smoothly follows car
   cam.x += (car.x - cam.x) * 0.1;
   cam.y += (car.y - cam.y) * 0.1;
+  lerpCamAngle(0.12);
 
   updateLapSystem();
   updateAI();
@@ -611,7 +624,14 @@ function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   ctx.save();
-  ctx.translate(canvas.width / 2 - cam.x, canvas.height / 2 - cam.y);
+  if (cameraMode === 'follow') {
+    // Place car at bottom-center; rotate so car heading points up
+    ctx.translate(canvas.width / 2, canvas.height * 0.70);
+    ctx.rotate(-cam.angle - Math.PI / 2);
+    ctx.translate(-cam.x, -cam.y);
+  } else {
+    ctx.translate(canvas.width / 2 - cam.x, canvas.height / 2 - cam.y);
+  }
 
   drawTrack();
   drawTireMarks();
@@ -622,6 +642,13 @@ function render() {
   ctx.restore();
 
   drawMinimap();
+
+  // Camera mode toggle indicator
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(10, 76, 220, 22);
+  ctx.font = '12px monospace';
+  ctx.fillStyle = cameraMode === 'follow' ? '#0cf' : '#aaa';
+  ctx.fillText(`[V] ${cameraMode === 'follow' ? 'Follow Cam' : 'God View'}`, 18, 91);
 
   // HUD — speed + position
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
