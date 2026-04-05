@@ -294,10 +294,37 @@ function addTireMarks(x, z, angle) {
   prevMarkR = addSeg(prevMarkR, rrx, rrz);
 }
 
+// ---- Game state machine ----
+// 'intro' → 'countdown' → 'racing' → 'finished'
+let gameState = 'intro';
+let countdownStart = 0;
+let raceStartTime  = 0;
+let totalRaceTime  = 0;
+
+function startCountdown() {
+  if (gameState !== 'intro') return;
+  gameState = 'countdown';
+  countdownStart = performance.now();
+}
+
+function getCountdownPhase() {
+  // returns { label, color, done } where done=true means GO phase finished
+  const elapsed = performance.now() - countdownStart;
+  if (elapsed < 1000) return { label: '3', color: '#ffffff', elapsed };
+  if (elapsed < 2000) return { label: '2', color: '#ffaa00', elapsed };
+  if (elapsed < 3000) return { label: '1', color: '#ff2200', elapsed };
+  if (elapsed < 4000) return { label: 'GO!', color: '#00ff66', elapsed };
+  return { label: '', color: '', done: true, elapsed };
+}
+
 // ---- Input ----
 const keys = {};
-document.addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Space') e.preventDefault(); });
-document.addEventListener('keyup',   e => { keys[e.code] = false; });
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'Enter') startCountdown();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // ---- Camera ----
 let camPos    = new THREE.Vector3(TRACK_RX - 14, 6, 0);
@@ -321,102 +348,371 @@ function fmtTime(ms) {
   return `${m}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
 }
 
-function drawHud() {
-  hctx.clearRect(0, 0, hud.width, hud.height);
-  const spd = Math.sqrt(car.vx*car.vx + car.vz*car.vz);
-  const kmh = (spd * 60 * 3.6 * 4).toFixed(0);
+// ---- Gear helper ----
+function getGear(kmh) {
+  if (kmh <  30) return 1;
+  if (kmh <  70) return 2;
+  if (kmh < 120) return 3;
+  if (kmh < 170) return 4;
+  if (kmh < 220) return 5;
+  return 6;
+}
 
-  // ---- Speed / track status (top-left) ----
-  hctx.fillStyle = 'rgba(0,0,0,0.55)';
-  hctx.fillRect(10, 10, 200, 56);
+// ---- Speedometer (circular, bottom-left) ----
+function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
+  const startA = Math.PI * 0.75;   // 135°
+  const endA   = Math.PI * 2.25;   // 405° (= 45°) → 270° arc
+  const maxKmh = 280;
+  const ratio  = Math.min(kmh / maxKmh, 1);
+  const needleA = startA + ratio * (endA - startA);
+
+  // Outer ring background
+  hctx.save();
+  hctx.beginPath();
+  hctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  hctx.fillStyle = 'rgba(0,0,0,0.75)';
+  hctx.fill();
+
+  // Coloured arc (green → yellow → red)
+  const grad = hctx.createConicalGradient
+    ? null   // not standard; use segment approach
+    : null;
+  const arcW = radius * 0.14;
+  hctx.lineWidth = arcW;
+  hctx.lineCap   = 'round';
+  // bg track
+  hctx.beginPath();
+  hctx.arc(cx, cy, radius - arcW / 2, startA, endA);
+  hctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  hctx.stroke();
+  // filled portion — 3 colour segments
+  const seg1End = startA + 0.55 * (endA - startA);
+  const seg2End = startA + 0.82 * (endA - startA);
+  function arcSeg(from, to, color) {
+    if (needleA <= from) return;
+    hctx.beginPath();
+    hctx.arc(cx, cy, radius - arcW / 2, from, Math.min(needleA, to));
+    hctx.strokeStyle = color;
+    hctx.stroke();
+  }
+  arcSeg(startA, seg1End, '#00e676');
+  arcSeg(seg1End, seg2End, '#ffea00');
+  arcSeg(seg2End, endA,    '#ff1744');
+
+  // Tick marks
+  hctx.lineWidth = 2;
+  for (let i = 0; i <= 14; i++) {
+    const a = startA + (i / 14) * (endA - startA);
+    const inner = i % 7 === 0 ? radius * 0.70 : (i % 2 === 0 ? radius * 0.76 : radius * 0.80);
+    const outer = radius * 0.86;
+    hctx.beginPath();
+    hctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+    hctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+    hctx.strokeStyle = i % 7 === 0 ? '#fff' : 'rgba(255,255,255,0.4)';
+    hctx.stroke();
+  }
+
+  // Needle
+  hctx.save();
+  hctx.translate(cx, cy);
+  hctx.rotate(needleA);
+  hctx.beginPath();
+  hctx.moveTo(-radius * 0.12, 0);
+  hctx.lineTo(radius * 0.70, 0);
+  hctx.lineWidth = 2.5;
+  hctx.strokeStyle = '#fff';
+  hctx.lineCap = 'round';
+  hctx.stroke();
+  hctx.restore();
+
+  // Centre dot
+  hctx.beginPath();
+  hctx.arc(cx, cy, radius * 0.06, 0, Math.PI * 2);
   hctx.fillStyle = '#fff';
-  hctx.font = 'bold 14px monospace';
-  hctx.fillText(`Speed: ${kmh} km/h`, 20, 32);
-  hctx.fillStyle = car.onTrack ? '#0f0' : '#f80';
-  hctx.fillText(car.onTrack ? 'ON TRACK' : 'OFF TRACK', 20, 52);
+  hctx.fill();
 
-  // ---- Lap panel (top-right) ----
-  const now = performance.now();
-  const currentLap = lapState.lapStart > 0 ? now - lapState.lapStart : 0;
-  const lapLabel = lapState.lap === 0 ? 'LAP --/3'
-    : lapState.finished ? 'FINISHED'
-    : `LAP ${lapState.lap}/${lapState.maxLaps}`;
+  // Speed number
+  hctx.textAlign = 'center';
+  hctx.font = `bold ${Math.round(radius * 0.30)}px monospace`;
+  hctx.fillStyle = '#fff';
+  hctx.fillText(Math.round(kmh), cx, cy + radius * 0.18);
+  hctx.font = `${Math.round(radius * 0.16)}px monospace`;
+  hctx.fillStyle = '#aaa';
+  hctx.fillText('km/h', cx, cy + radius * 0.36);
 
-  const lx = hud.width - 250;
-  hctx.fillStyle = 'rgba(0,0,0,0.6)';
-  hctx.fillRect(lx, 10, 240, 100);
+  // Gear box (right of centre)
+  const gx = cx + radius * 0.35, gy = cy - radius * 0.18;
+  hctx.font = `bold ${Math.round(radius * 0.36)}px monospace`;
+  hctx.fillStyle = drifting ? '#ffea00' : '#00e5ff';
+  hctx.fillText(`${gear}`, gx, gy);
+  hctx.font = `${Math.round(radius * 0.14)}px monospace`;
+  hctx.fillStyle = '#888';
+  hctx.fillText('GEAR', gx, gy + radius * 0.22);
 
-  hctx.fillStyle = '#ff0';
+  // Drift angle (above speedometer)
+  if (drifting && driftAngleDeg > 2) {
+    hctx.font = `bold ${Math.round(radius * 0.22)}px monospace`;
+    hctx.fillStyle = `rgba(255,220,0,${0.7 + 0.3 * Math.sin(Date.now()/80)})`;
+    hctx.shadowColor = '#f80';
+    hctx.shadowBlur = 12;
+    hctx.fillText(`${Math.round(driftAngleDeg)}°`, cx, cy - radius * 0.60);
+    hctx.font = `${Math.round(radius * 0.14)}px monospace`;
+    hctx.fillStyle = '#f80';
+    hctx.shadowBlur = 0;
+    hctx.fillText('DRIFT ANGLE', cx, cy - radius * 0.42);
+  }
+
+  hctx.restore();
+}
+
+// ---- Intro screen ----
+function drawIntro() {
+  const W = hud.width, H = hud.height;
+  hctx.save();
+
+  // Dark overlay
+  hctx.fillStyle = 'rgba(0,0,0,0.72)';
+  hctx.fillRect(0, 0, W, H);
+
+  // Title
+  hctx.textAlign = 'center';
+  hctx.font = 'bold 72px monospace';
+  hctx.fillStyle = '#e10600';
+  hctx.shadowColor = '#e10600';
+  hctx.shadowBlur = 40;
+  hctx.fillText('SPEED RUN', W/2, H/2 - 130);
+  hctx.shadowBlur = 0;
+
+  hctx.font = '18px monospace';
+  hctx.fillStyle = '#aaa';
+  hctx.fillText('F1 Style Racing', W/2, H/2 - 90);
+
+  // Controls box
+  const bw = 360, bh = 170, bx = W/2 - bw/2, by = H/2 - 60;
+  hctx.fillStyle = 'rgba(255,255,255,0.06)';
+  hctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  hctx.lineWidth = 1;
+  hctx.fillRect(bx, by, bw, bh);
+  hctx.strokeRect(bx, by, bw, bh);
+
+  const controls = [
+    ['W / ↑',       'Accelerate'],
+    ['S / ↓',       'Brake / Reverse'],
+    ['A / ← D / →', 'Steer'],
+    ['Space',        'Handbrake (drift)'],
+  ];
+  hctx.font = '15px monospace';
+  controls.forEach(([key, desc], i) => {
+    const y = by + 34 + i * 34;
+    hctx.textAlign = 'right';
+    hctx.fillStyle = '#00e5ff';
+    hctx.fillText(key, W/2 - 10, y);
+    hctx.textAlign = 'left';
+    hctx.fillStyle = '#ddd';
+    hctx.fillText(desc, W/2 + 14, y);
+  });
+
+  // ENTER prompt (pulsing)
+  const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
+  hctx.textAlign = 'center';
   hctx.font = 'bold 22px monospace';
-  hctx.fillText(lapLabel, lx + 12, 38);
+  hctx.fillStyle = `rgba(255,255,255,${pulse})`;
+  hctx.fillText('PRESS  ENTER  TO  RACE', W/2, H/2 + 140);
 
+  hctx.restore();
+}
+
+// ---- Countdown overlay ----
+function drawCountdown() {
+  const cd = getCountdownPhase();
+  if (!cd.label) return;
+  const W = hud.width, H = hud.height;
+
+  hctx.save();
+  hctx.textAlign = 'center';
+  hctx.textBaseline = 'middle';
+
+  // Pulse: scale shrinks 1.4→1.0 over each 1s window
+  const phase  = (cd.elapsed % 1000) / 1000;
+  const scale  = cd.label === 'GO!' ? 1.0 + (1 - phase) * 0.4 : 1.4 - phase * 0.4;
+  const fsize  = Math.round(120 * scale);
+
+  // Shadow
+  hctx.font = `bold ${fsize}px monospace`;
+  hctx.fillStyle = 'rgba(0,0,0,0.4)';
+  hctx.fillText(cd.label, W/2 + 5, H/2 + 5);
+  // Main
+  hctx.fillStyle = cd.color;
+  hctx.shadowColor = cd.color;
+  hctx.shadowBlur = 50;
+  hctx.fillText(cd.label, W/2, H/2);
+
+  hctx.restore();
+}
+
+// ---- Finish screen ----
+function drawFinishScreen() {
+  const W = hud.width, H = hud.height;
+  hctx.save();
+
+  hctx.fillStyle = 'rgba(0,0,0,0.78)';
+  hctx.fillRect(0, 0, W, H);
+
+  hctx.textAlign = 'center';
+  hctx.font = 'bold 80px monospace';
+  hctx.fillStyle = '#ffea00';
+  hctx.shadowColor = '#f80';
+  hctx.shadowBlur = 50;
+  hctx.fillText('FINISHED!', W/2, H/2 - 110);
+  hctx.shadowBlur = 0;
+
+  const rows = [
+    ['Total Time', fmtTime(totalRaceTime)],
+    ['Best Lap',   fmtTime(lapState.bestLap)],
+    ['Last Lap',   fmtTime(lapState.lastLap)],
+    ['Laps',       `${lapState.maxLaps} / ${lapState.maxLaps}`],
+  ];
+  rows.forEach(([label, val], i) => {
+    const y = H/2 - 20 + i * 48;
+    hctx.font = '20px monospace';
+    hctx.fillStyle = '#888';
+    hctx.textAlign = 'right';
+    hctx.fillText(label, W/2 - 10, y);
+    hctx.font = 'bold 24px monospace';
+    hctx.fillStyle = i === 1 ? '#00e676' : '#fff';
+    hctx.textAlign = 'left';
+    hctx.fillText(val, W/2 + 14, y);
+  });
+
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 500);
+  hctx.textAlign = 'center';
+  hctx.font = '16px monospace';
+  hctx.fillStyle = `rgba(170,170,170,${pulse})`;
+  hctx.fillText('Refresh page to race again', W/2, H/2 + 200);
+
+  hctx.restore();
+}
+
+// ---- Racing HUD ----
+function drawRacingHud(kmh, gear, drifting, driftAngleDeg) {
+  const W = hud.width, H = hud.height;
+
+  // Speedometer — bottom-left
+  const sR = 80;
+  drawSpeedometer(sR + 20, H - sR - 20, sR, kmh, gear, drifting, driftAngleDeg);
+
+  // Lap panel — top-right
+  const now = performance.now();
+  const currentLapMs = lapState.lapStart > 0 ? now - lapState.lapStart : 0;
+  const lapLabel = lapState.finished ? 'FINISHED' : `LAP ${lapState.lap}/${lapState.maxLaps}`;
+  const lx = W - 250;
+
+  hctx.fillStyle = 'rgba(0,0,0,0.6)';
+  hctx.fillRect(lx, 10, 240, 102);
+  hctx.fillStyle = '#ffea00';
+  hctx.font = 'bold 22px monospace';
+  hctx.textAlign = 'left';
+  hctx.fillText(lapLabel, lx + 12, 38);
   hctx.fillStyle = '#fff';
   hctx.font = '14px monospace';
-  hctx.fillText(`Current: ${fmtTime(lapState.lapStart > 0 ? currentLap : null)}`, lx + 12, 60);
+  hctx.fillText(`Current: ${fmtTime(currentLapMs)}`, lx + 12, 60);
   hctx.fillText(`Last:    ${fmtTime(lapState.lastLap)}`, lx + 12, 78);
-  hctx.fillStyle = '#0f0';
+  hctx.fillStyle = '#00e676';
   hctx.fillText(`Best:    ${fmtTime(lapState.bestLap)}`, lx + 12, 96);
 
-  // ---- Checkpoint dots ----
+  // Checkpoint dots
   hctx.fillStyle = 'rgba(0,0,0,0.5)';
-  hctx.fillRect(lx, 112, 240, 22);
+  hctx.fillRect(lx, 114, 240, 22);
   for (let i = 0; i < CP_ANGLES.length; i++) {
-    const passed = lapState.lap > 0
-      ? (i < lapState.nextCp || (lapState.nextCp === 0 && lapState.lap > 0))
-      : i < lapState.nextCp;
+    const passed = i < lapState.nextCp;
     hctx.beginPath();
-    hctx.arc(lx + 20 + i * 55, 123, 7, 0, Math.PI * 2);
-    hctx.fillStyle = passed ? '#0f0' : '#444';
+    hctx.arc(lx + 25 + i * 55, 125, 7, 0, Math.PI * 2);
+    hctx.fillStyle = passed ? '#00e676' : '#333';
     hctx.fill();
-    hctx.strokeStyle = '#888';
+    hctx.strokeStyle = '#666';
     hctx.lineWidth = 1;
     hctx.stroke();
   }
 
-  // ---- DRIFT text ----
-  if (car.drifting) {
+  // Off-track warning
+  if (!car.onTrack) {
     hctx.save();
-    hctx.font = 'bold 36px monospace';
-    hctx.fillStyle = `rgba(255,220,0,${0.7 + 0.3 * Math.sin(Date.now()/80)})`;
-    hctx.shadowColor = '#f80';
-    hctx.shadowBlur = 20;
     hctx.textAlign = 'center';
-    hctx.fillText('DRIFT', hud.width/2, hud.height - 50);
+    hctx.font = 'bold 20px monospace';
+    hctx.fillStyle = `rgba(255,150,0,${0.7 + 0.3 * Math.sin(Date.now()/200)})`;
+    hctx.fillText('OFF TRACK', W/2, 40);
     hctx.restore();
   }
 
-  // ---- Flash message (BEST LAP / FINISHED) ----
-  if (lapState.flashTimer > 0) {
+  // Flash message (BEST LAP)
+  if (lapState.flashTimer > 0 && !lapState.finished) {
     const alpha = Math.min(1, lapState.flashTimer / 40);
     hctx.save();
     hctx.textAlign = 'center';
-    hctx.font = 'bold 52px monospace';
-    hctx.fillStyle = `rgba(255,255,0,${alpha})`;
+    hctx.font = 'bold 48px monospace';
+    hctx.fillStyle = `rgba(255,234,0,${alpha})`;
     hctx.shadowColor = '#f80';
     hctx.shadowBlur = 30;
-    hctx.fillText(lapState.flash, hud.width/2, hud.height/2 - 20);
-    if (lapState.finished && lapState.lastLap !== null) {
-      hctx.font = 'bold 24px monospace';
-      hctx.fillStyle = `rgba(255,255,255,${alpha})`;
-      hctx.shadowBlur = 0;
-      hctx.fillText(`Best lap: ${fmtTime(lapState.bestLap)}`, hud.width/2, hud.height/2 + 30);
-    }
+    hctx.fillText(lapState.flash, W/2, H/2 - 30);
+    hctx.font = '20px monospace';
+    hctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    hctx.shadowBlur = 0;
+    hctx.fillText(fmtTime(lapState.bestLap), W/2, H/2 + 10);
     hctx.restore();
   }
+}
 
-  // ---- Controls hint ----
-  hctx.fillStyle = 'rgba(0,0,0,0.45)';
-  hctx.fillRect(10, hud.height - 80, 260, 68);
-  hctx.fillStyle = '#aaa';
-  hctx.font = '12px monospace';
-  hctx.textAlign = 'left';
-  hctx.fillText('WASD / Arrows  — drive', 18, hud.height - 60);
-  hctx.fillText('Space          — handbrake / drift', 18, hud.height - 44);
-  hctx.fillText('S while moving — brake', 18, hud.height - 28);
+function drawHud() {
+  hctx.clearRect(0, 0, hud.width, hud.height);
+
+  if (gameState === 'intro') { drawIntro(); return; }
+  if (gameState === 'finished' || lapState.finished) { drawFinishScreen(); return; }
+
+  const spd = Math.sqrt(car.vx*car.vx + car.vz*car.vz);
+  const kmh = spd * 60 * 3.6 * 4;
+  const gear = getGear(kmh);
+
+  // Drift angle: angle between velocity vector and car heading
+  const velAngle  = Math.atan2(-car.vz, car.vx);
+  const angleDiff = Math.abs(((velAngle - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+  const driftDeg  = (angleDiff * 180 / Math.PI);
+
+  drawRacingHud(kmh, gear, car.drifting, driftDeg);
+
+  if (gameState === 'countdown') drawCountdown();
 }
 
 // ---- Update ----
 function update() {
+  // Advance countdown → racing
+  if (gameState === 'countdown') {
+    const cd = getCountdownPhase();
+    if (cd.done) {
+      gameState = 'racing';
+      raceStartTime = performance.now();
+      lapState.lapStart = raceStartTime;
+      lapState.lap = 1;
+    }
+  }
+
+  // Freeze physics when not racing
+  if (gameState !== 'racing') {
+    // Still update camera to orbit gently around start
+    const t = performance.now() / 4000;
+    const orbitX = TRACK_RX + Math.cos(t) * 20;
+    const orbitZ = Math.sin(t) * 14;
+    camPos.lerp(new THREE.Vector3(orbitX, 8, orbitZ), 0.02);
+    camTarget.lerp(new THREE.Vector3(TRACK_RX, 0, 0), 0.05);
+    camera.position.copy(camPos);
+    camera.lookAt(camTarget);
+    return;
+  }
+
+  if (lapState.finished) {
+    if (totalRaceTime === 0) totalRaceTime = performance.now() - raceStartTime;
+    return;
+  }
+
   const up        = keys['KeyW'] || keys['ArrowUp'];
   const down      = keys['KeyS'] || keys['ArrowDown'];
   const left      = keys['KeyA'] || keys['ArrowLeft'];
