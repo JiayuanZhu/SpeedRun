@@ -46,11 +46,16 @@ const car = {
 // Camera
 const cam = { x: 0, y: 0 };
 
+// Game state
+let gameState = 'countdown'; // 'countdown' | 'racing' | 'finished'
+let countdownStart = performance.now();
+
 // Keys
 const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.key] = true;
   if (e.key === ' ') e.preventDefault(); // prevent page scroll
+  if (e.key === 'r' || e.key === 'R') restartGame();
 });
 document.addEventListener('keyup', e => keys[e.key] = false);
 
@@ -94,8 +99,8 @@ const lapState = {
   lap: 1,
   maxLaps: 3,
   checkpointsMet: new Array(CHECKPOINTS.length).fill(false),
-  raceStartTime: performance.now(),
-  lapStartTime: performance.now(),
+  raceStartTime: 0,
+  lapStartTime: 0,
   currentLapTime: 0,
   bestLapTime: null,
   finished: false,
@@ -139,6 +144,7 @@ function updateLapSystem() {
       }
       if (lapState.lap >= lapState.maxLaps) {
         lapState.finished = true;
+        gameState = 'finished';
         lapState.totalTime = now - lapState.raceStartTime;
       } else {
         lapState.lap++;
@@ -326,7 +332,77 @@ function isOnTrack(x, y) {
   return outerNorm <= 1 && innerNorm >= 1;
 }
 
+function restartGame() {
+  // Reset player car
+  car.x = TRACK_CX;
+  car.y = -(TRACK_RY_OUTER - TRACK_WIDTH / 2);
+  car.angle = 0;
+  car.vx = 0;
+  car.vy = 0;
+  car.angularVel = 0;
+  car.onTrack = true;
+  car.drifting = false;
+  car.driftBoostTimer = 0;
+
+  // Reset camera
+  cam.x = car.x;
+  cam.y = car.y;
+
+  // Reset tire marks
+  tireMarks.length = 0;
+
+  // Reset lap state
+  lapState.lap = 1;
+  lapState.checkpointsMet.fill(false);
+  lapState.raceStartTime = 0;
+  lapState.lapStartTime = 0;
+  lapState.currentLapTime = 0;
+  lapState.bestLapTime = null;
+  lapState.finished = false;
+  lapState.totalTime = 0;
+  lapState.prevCarX = 0;
+
+  // Reset AI
+  const aiDefaults = [
+    { angularSpeed: 0.008, t: 0 },
+    { angularSpeed: 0.009, t: Math.PI * 2 / 3 },
+    { angularSpeed: 0.010, t: Math.PI * 4 / 3 },
+  ];
+  for (let i = 0; i < aiCars.length; i++) {
+    aiCars[i].t = aiDefaults[i].t;
+    aiCars[i].accumulated = 0;
+    aiCars[i].laps = 0;
+    aiCars[i].angularSpeed = aiDefaults[i].angularSpeed;
+    aiCars[i].drifting = false;
+    aiCars[i].driftBoostTimer = 0;
+    aiCars[i].initialOffset = ((aiCars[i].t - SF_ANGLE) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    aiCars[i].x = RX_MID * Math.cos(aiCars[i].t);
+    aiCars[i].y = RY_MID * Math.sin(aiCars[i].t);
+  }
+
+  // Start countdown
+  gameState = 'countdown';
+  countdownStart = performance.now();
+}
+
 function update() {
+  // Handle countdown phase
+  if (gameState === 'countdown') {
+    const elapsed = performance.now() - countdownStart;
+    if (elapsed >= 3700) {
+      gameState = 'racing';
+      const now = performance.now();
+      lapState.raceStartTime = now;
+      lapState.lapStartTime = now;
+    }
+    // Fade camera to car start position during countdown
+    cam.x += (car.x - cam.x) * 0.1;
+    cam.y += (car.y - cam.y) * 0.1;
+    return;
+  }
+
+  if (gameState === 'finished') return;
+
   const up    = keys['w'] || keys['W'] || keys['ArrowUp'];
   const down  = keys['s'] || keys['S'] || keys['ArrowDown'];
   const left  = keys['a'] || keys['A'] || keys['ArrowLeft'];
@@ -514,6 +590,38 @@ function render() {
     ctx.fillText(`Total: ${formatTime(lapState.totalTime)}`, canvas.width / 2, canvas.height / 2 + 20);
     const bestFin = lapState.bestLapTime !== null ? formatTime(lapState.bestLapTime) : '--:--.--';
     ctx.fillText(`Best Lap: ${bestFin}`, canvas.width / 2, canvas.height / 2 + 60);
+    ctx.font = '18px monospace';
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('Press R to restart', canvas.width / 2, canvas.height / 2 + 110);
+    ctx.restore();
+    return;
+  }
+
+  // Countdown overlay
+  if (gameState === 'countdown') {
+    const elapsed = performance.now() - countdownStart;
+    let text, color;
+    if (elapsed < 1000)      { text = '3'; color = '#ffffff'; }
+    else if (elapsed < 2000) { text = '2'; color = '#ff8800'; }
+    else if (elapsed < 3000) { text = '1'; color = '#e10600'; }
+    else                     { text = 'GO!'; color = '#00ff44'; }
+
+    // Pulse scale: 1→1.3 over each 1s window
+    const phase = elapsed % 1000;
+    const scale = 1.3 - (phase / 1000) * 0.3;
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    ctx.font = `bold ${Math.round(120 * scale)}px monospace`;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillText(text, cx + 4, cy + 4);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 40;
+    ctx.fillText(text, cx, cy);
     ctx.restore();
     return;
   }
