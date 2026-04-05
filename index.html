@@ -58,6 +58,87 @@ document.addEventListener('keyup', e => keys[e.key] = false);
 const tireMarks = [];
 const TIRE_MARK_LIFE = 120; // frames until fully faded (~2s at 60fps)
 
+// Lap system
+const RX_MID = (TRACK_RX_OUTER + TRACK_RX_INNER) / 2; // 640
+const RY_MID = (TRACK_RY_OUTER + TRACK_RY_INNER) / 2; // 320
+const CHECKPOINT_RADIUS = 75;
+
+function cpPos(t) {
+  return { x: RX_MID * Math.cos(t), y: RY_MID * Math.sin(t) };
+}
+
+// 7 checkpoints in clockwise order starting just after the start/finish line (top of track)
+const CHECKPOINTS = [
+  cpPos(-Math.PI / 4),      // upper-right
+  cpPos(0),                 // right
+  cpPos(Math.PI / 4),       // lower-right
+  cpPos(Math.PI / 2),       // bottom
+  cpPos(3 * Math.PI / 4),   // lower-left
+  cpPos(Math.PI),           // left
+  cpPos(-3 * Math.PI / 4),  // upper-left
+];
+
+const lapState = {
+  lap: 1,
+  maxLaps: 3,
+  checkpointsMet: new Array(CHECKPOINTS.length).fill(false),
+  raceStartTime: performance.now(),
+  lapStartTime: performance.now(),
+  currentLapTime: 0,
+  bestLapTime: null,
+  finished: false,
+  totalTime: 0,
+  prevCarX: 0,
+};
+
+function formatTime(ms) {
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const cs = Math.floor((ms % 1000) / 10);
+  return `${m}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+}
+
+function updateLapSystem() {
+  if (lapState.finished) return;
+
+  const now = performance.now();
+  lapState.currentLapTime = now - lapState.lapStartTime;
+
+  // Check proximity to each checkpoint in order
+  for (let i = 0; i < CHECKPOINTS.length; i++) {
+    if (!lapState.checkpointsMet[i]) {
+      const cp = CHECKPOINTS[i];
+      const dx = car.x - cp.x;
+      const dy = car.y - cp.y;
+      if (dx * dx + dy * dy < CHECKPOINT_RADIUS * CHECKPOINT_RADIUS) {
+        lapState.checkpointsMet[i] = true;
+      }
+      break; // must hit in order — stop at first unmet
+    }
+  }
+
+  // Start/finish crossing: car crosses x=0 left→right in the upper track region
+  const prevX = lapState.prevCarX;
+  if (prevX < 0 && car.x >= 0 && car.y < -250 && car.y > -420) {
+    if (lapState.checkpointsMet.every(v => v)) {
+      const lapTime = lapState.currentLapTime;
+      if (lapState.bestLapTime === null || lapTime < lapState.bestLapTime) {
+        lapState.bestLapTime = lapTime;
+      }
+      if (lapState.lap >= lapState.maxLaps) {
+        lapState.finished = true;
+        lapState.totalTime = now - lapState.raceStartTime;
+      } else {
+        lapState.lap++;
+        lapState.checkpointsMet.fill(false);
+        lapState.lapStartTime = now;
+      }
+    }
+  }
+
+  lapState.prevCarX = car.x;
+}
+
 // Build ellipse path helper
 function ellipsePath(cx, cy, rx, ry) {
   ctx.beginPath();
@@ -306,6 +387,8 @@ function update() {
   // Camera smoothly follows car
   cam.x += (car.x - cam.x) * 0.1;
   cam.y += (car.y - cam.y) * 0.1;
+
+  updateLapSystem();
 }
 
 function render() {
@@ -320,13 +403,66 @@ function render() {
 
   ctx.restore();
 
-  // HUD background
+  // HUD — speed bar
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(10, 10, 200, 36);
+  ctx.fillRect(10, 10, 220, 36);
   ctx.fillStyle = '#fff';
   ctx.font = '14px monospace';
   const dispSpd = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
   ctx.fillText(`Speed: ${(dispSpd * 60).toFixed(0)} km/h  ${car.onTrack ? '' : '[GRASS]'}`, 20, 32);
+
+  // HUD — lap info (top-right area)
+  const lapX = canvas.width - 240;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(lapX, 10, 230, 90);
+
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 22px monospace';
+  ctx.fillText(`LAP ${lapState.lap}/${lapState.maxLaps}`, lapX + 12, 38);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px monospace';
+  ctx.fillText(`Current: ${formatTime(lapState.currentLapTime)}`, lapX + 12, 60);
+  const bestStr = lapState.bestLapTime !== null ? formatTime(lapState.bestLapTime) : '--:--.--';
+  ctx.fillText(`Best:    ${bestStr}`, lapX + 12, 80);
+
+  // Checkpoint progress dots
+  const dotY = 96;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(lapX, dotY, 230, 22);
+  for (let i = 0; i < CHECKPOINTS.length; i++) {
+    const dx = lapX + 12 + i * 30;
+    ctx.beginPath();
+    ctx.arc(dx, dotY + 11, 8, 0, Math.PI * 2);
+    ctx.fillStyle = lapState.checkpointsMet[i] ? '#0f0' : '#444';
+    ctx.fill();
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // FINISHED overlay
+  if (lapState.finished) {
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 72px monospace';
+    ctx.fillStyle = '#ff0';
+    ctx.shadowColor = '#f80';
+    ctx.shadowBlur = 30;
+    ctx.fillText('FINISHED!', canvas.width / 2, canvas.height / 2 - 40);
+
+    ctx.font = 'bold 28px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 0;
+    ctx.fillText(`Total: ${formatTime(lapState.totalTime)}`, canvas.width / 2, canvas.height / 2 + 20);
+    const bestFin = lapState.bestLapTime !== null ? formatTime(lapState.bestLapTime) : '--:--.--';
+    ctx.fillText(`Best Lap: ${bestFin}`, canvas.width / 2, canvas.height / 2 + 60);
+    ctx.restore();
+    return;
+  }
 
   // Drift / boost status text
   if (car.drifting) {
