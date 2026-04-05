@@ -63,6 +63,9 @@ document.addEventListener('keyup', e => keys[e.key] = false);
 const tireMarks = [];
 const TIRE_MARK_LIFE = 120; // frames until fully faded (~2s at 60fps)
 
+// Speed particles: { x, y, alpha, life }
+const particles = [];
+
 // Lap system
 const RX_MID = (TRACK_RX_OUTER + TRACK_RX_INNER) / 2; // 640
 const RY_MID = (TRACK_RY_OUTER + TRACK_RY_INNER) / 2; // 320
@@ -262,6 +265,75 @@ function drawTireMarks() {
   }
 }
 
+function drawParticles() {
+  for (const p of particles) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${p.alpha})`;
+    ctx.fill();
+  }
+}
+
+function drawMinimap() {
+  const mx = canvas.width - 160;
+  const my = 130;
+  const mw = 150;
+  const mh = 100;
+  const scale = 0.095;
+  const cx = mx + mw / 2;
+  const cy = my + mh / 2;
+
+  // Background
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(mx, my, mw, mh);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(mx, my, mw, mh);
+  ctx.clip();
+
+  // Track fill (even-odd to punch out inner ellipse)
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, TRACK_RX_OUTER * scale, TRACK_RY_OUTER * scale, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, TRACK_RX_INNER * scale, TRACK_RY_INNER * scale, 0, 0, Math.PI * 2, true);
+  ctx.fillStyle = 'rgba(120,120,120,0.6)';
+  ctx.fill('evenodd');
+
+  // Track outline strokes
+  ctx.strokeStyle = '#aaa';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, TRACK_RX_OUTER * scale, TRACK_RY_OUTER * scale, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, TRACK_RX_INNER * scale, TRACK_RY_INNER * scale, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // AI car dots
+  for (const ai of aiCars) {
+    ctx.beginPath();
+    ctx.arc(cx + ai.x * scale, cy + ai.y * scale, 3, 0, Math.PI * 2);
+    ctx.fillStyle = ai.color;
+    ctx.fill();
+  }
+
+  // Player dot (slightly larger, white outline)
+  ctx.beginPath();
+  ctx.arc(cx + car.x * scale, cy + car.y * scale, 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#e10600';
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.restore();
+
+  // Border
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mx, my, mw, mh);
+}
+
 function drawCar(carObj, bodyColor) {
   ctx.save();
   ctx.translate(carObj.x, carObj.y);
@@ -350,6 +422,7 @@ function restartGame() {
 
   // Reset tire marks
   tireMarks.length = 0;
+  particles.length = 0;
 
   // Reset lap state
   lapState.lap = 1;
@@ -507,6 +580,25 @@ function update() {
     if (tireMarks[i].alpha <= 0) tireMarks.splice(i, 1);
   }
 
+  // Speed particles: spawn behind car when fast
+  if (speed > 5) {
+    const cosA = Math.cos(car.angle);
+    const sinA = Math.sin(car.angle);
+    const rearX = car.x - cosA * (car.width * 0.5);
+    const rearY = car.y - sinA * (car.width * 0.5);
+    const life = 15 + Math.random() * 15;
+    particles.push({
+      x: rearX + (Math.random() - 0.5) * 8,
+      y: rearY + (Math.random() - 0.5) * 8,
+      alpha: 0.5 + Math.random() * 0.3,
+      life,
+    });
+  }
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].alpha -= 1 / particles[i].life;
+    if (particles[i].alpha <= 0) particles.splice(i, 1);
+  }
+
   // Camera smoothly follows car
   cam.x += (car.x - cam.x) * 0.1;
   cam.y += (car.y - cam.y) * 0.1;
@@ -523,10 +615,13 @@ function render() {
 
   drawTrack();
   drawTireMarks();
+  drawParticles();
   for (const ai of aiCars) drawCar(ai, ai.color);
   drawCar(car, '#e10600');
 
   ctx.restore();
+
+  drawMinimap();
 
   // HUD — speed + position
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
