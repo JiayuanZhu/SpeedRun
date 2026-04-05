@@ -144,13 +144,118 @@ const DRIFT_BUILDUP = 0.12;
 const DRIFT_DECAY   = 0.08;
 
 function isOnTrack(x, z) {
-  const nx = x / TRACK_RX, nz = z / TRACK_RZ;
-  const r2 = nx*nx + nz*nz;
-  const innerX = (TRACK_RX - TRACK_W/2) / TRACK_RX;
-  const innerZ = (TRACK_RZ - TRACK_W/2) / TRACK_RZ;
   const ni = (x/(TRACK_RX-TRACK_W/2))**2 + (z/(TRACK_RZ-TRACK_W/2))**2;
   const no = (x/(TRACK_RX+TRACK_W/2))**2 + (z/(TRACK_RZ+TRACK_W/2))**2;
   return no <= 1 && ni >= 1;
+}
+
+// ---- Boundary collision ----
+// Push car back onto track and reflect velocity when it crosses the edge.
+// Returns true if a collision was resolved.
+function resolveTrackBoundary() {
+  const outerRX = TRACK_RX + TRACK_W / 2;
+  const outerRZ = TRACK_RZ + TRACK_W / 2;
+  const innerRX = TRACK_RX - TRACK_W / 2;
+  const innerRZ = TRACK_RZ - TRACK_W / 2;
+
+  const no = (car.x / outerRX)**2 + (car.z / outerRZ)**2;
+  const ni = (car.x / innerRX)**2 + (car.z / innerRZ)**2;
+
+  let hit = false;
+
+  if (no > 1) {
+    // Outside outer wall — find nearest point on outer ellipse and push in
+    const t = Math.atan2(car.z / outerRZ, car.x / outerRX);
+    const nx = outerRX * Math.cos(t);
+    const nz = outerRZ * Math.sin(t);
+    // Normal pointing inward
+    const nnx = -Math.cos(t), nnz = -Math.sin(t);
+    car.x = nx + nnx * 0.1;
+    car.z = nz + nnz * 0.1;
+    // Reflect velocity along normal and damp
+    const dot = car.vx * nnx + car.vz * nnz;
+    if (dot < 0) {
+      car.vx -= 2 * dot * nnx;
+      car.vz -= 2 * dot * nnz;
+    }
+    car.vx *= 0.35; car.vz *= 0.35;
+    hit = true;
+  } else if (ni < 1) {
+    // Inside inner wall
+    const t = Math.atan2(car.z / innerRZ, car.x / innerRX);
+    const nx = innerRX * Math.cos(t);
+    const nz = innerRZ * Math.sin(t);
+    const nnx = Math.cos(t), nnz = Math.sin(t); // normal pointing outward
+    car.x = nx + nnx * 0.1;
+    car.z = nz + nnz * 0.1;
+    const dot = car.vx * nnx + car.vz * nnz;
+    if (dot < 0) {
+      car.vx -= 2 * dot * nnx;
+      car.vz -= 2 * dot * nnz;
+    }
+    car.vx *= 0.35; car.vz *= 0.35;
+    hit = true;
+  }
+
+  return hit;
+}
+
+// ---- Checkpoint + lap system ----
+// 4 checkpoints evenly around the ellipse, starting just past the S/F line.
+// S/F line is at angle=0 (car.x = TRACK_RX, car.z = 0).
+const CP_ANGLES = [Math.PI/2, Math.PI, 3*Math.PI/2, 0]; // quarter, half, 3/4, finish
+const CP_RADIUS = 8; // distance threshold to "hit" a checkpoint
+
+const lapState = {
+  lap: 0,          // completed laps
+  maxLaps: 3,
+  nextCp: 0,       // index into CP_ANGLES — next checkpoint to hit
+  lapStart: 0,     // performance.now() at start of current lap
+  bestLap: null,   // ms
+  lastLap: null,
+  finished: false,
+  // Flash message
+  flash: '',
+  flashTimer: 0,
+};
+
+function cpWorld(angle) {
+  return { x: TRACK_RX * Math.cos(angle), z: TRACK_RZ * Math.sin(angle) };
+}
+
+function updateLap() {
+  if (lapState.finished) return;
+
+  const cp = cpWorld(CP_ANGLES[lapState.nextCp]);
+  const dx = car.x - cp.x, dz = car.z - cp.z;
+  if (dx*dx + dz*dz < CP_RADIUS * CP_RADIUS) {
+    if (lapState.nextCp === CP_ANGLES.length - 1) {
+      // Crossed S/F line — completed a lap
+      const now = performance.now();
+      if (lapState.lapStart > 0) {
+        const lapTime = now - lapState.lapStart;
+        lapState.lastLap = lapTime;
+        if (lapState.bestLap === null || lapTime < lapState.bestLap) {
+          lapState.bestLap = lapTime;
+          lapState.flash = 'BEST LAP!';
+          lapState.flashTimer = 180;
+        }
+        lapState.lap++;
+        if (lapState.lap >= lapState.maxLaps) {
+          lapState.finished = true;
+          lapState.flash = 'FINISHED!';
+          lapState.flashTimer = 9999;
+        }
+      } else {
+        // First time crossing S/F — start timing
+        lapState.lap = 1;
+      }
+      lapState.lapStart = now;
+    }
+    lapState.nextCp = (lapState.nextCp + 1) % CP_ANGLES.length;
+  }
+
+  if (lapState.flashTimer > 0) lapState.flashTimer--;
 }
 
 // ---- Tire marks ----
@@ -208,11 +313,20 @@ const hctx = hud.getContext('2d');
 function resizeHud() { hud.width = window.innerWidth; hud.height = window.innerHeight; }
 resizeHud();
 
+function fmtTime(ms) {
+  if (ms === null) return '--:--.--';
+  const m  = Math.floor(ms / 60000);
+  const s  = Math.floor((ms % 60000) / 1000);
+  const cs = Math.floor((ms % 1000) / 10);
+  return `${m}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
+}
+
 function drawHud() {
   hctx.clearRect(0, 0, hud.width, hud.height);
   const spd = Math.sqrt(car.vx*car.vx + car.vz*car.vz);
   const kmh = (spd * 60 * 3.6 * 4).toFixed(0);
 
+  // ---- Speed / track status (top-left) ----
   hctx.fillStyle = 'rgba(0,0,0,0.55)';
   hctx.fillRect(10, 10, 200, 56);
   hctx.fillStyle = '#fff';
@@ -221,21 +335,81 @@ function drawHud() {
   hctx.fillStyle = car.onTrack ? '#0f0' : '#f80';
   hctx.fillText(car.onTrack ? 'ON TRACK' : 'OFF TRACK', 20, 52);
 
+  // ---- Lap panel (top-right) ----
+  const now = performance.now();
+  const currentLap = lapState.lapStart > 0 ? now - lapState.lapStart : 0;
+  const lapLabel = lapState.lap === 0 ? 'LAP --/3'
+    : lapState.finished ? 'FINISHED'
+    : `LAP ${lapState.lap}/${lapState.maxLaps}`;
+
+  const lx = hud.width - 250;
+  hctx.fillStyle = 'rgba(0,0,0,0.6)';
+  hctx.fillRect(lx, 10, 240, 100);
+
+  hctx.fillStyle = '#ff0';
+  hctx.font = 'bold 22px monospace';
+  hctx.fillText(lapLabel, lx + 12, 38);
+
+  hctx.fillStyle = '#fff';
+  hctx.font = '14px monospace';
+  hctx.fillText(`Current: ${fmtTime(lapState.lapStart > 0 ? currentLap : null)}`, lx + 12, 60);
+  hctx.fillText(`Last:    ${fmtTime(lapState.lastLap)}`, lx + 12, 78);
+  hctx.fillStyle = '#0f0';
+  hctx.fillText(`Best:    ${fmtTime(lapState.bestLap)}`, lx + 12, 96);
+
+  // ---- Checkpoint dots ----
+  hctx.fillStyle = 'rgba(0,0,0,0.5)';
+  hctx.fillRect(lx, 112, 240, 22);
+  for (let i = 0; i < CP_ANGLES.length; i++) {
+    const passed = lapState.lap > 0
+      ? (i < lapState.nextCp || (lapState.nextCp === 0 && lapState.lap > 0))
+      : i < lapState.nextCp;
+    hctx.beginPath();
+    hctx.arc(lx + 20 + i * 55, 123, 7, 0, Math.PI * 2);
+    hctx.fillStyle = passed ? '#0f0' : '#444';
+    hctx.fill();
+    hctx.strokeStyle = '#888';
+    hctx.lineWidth = 1;
+    hctx.stroke();
+  }
+
+  // ---- DRIFT text ----
   if (car.drifting) {
     hctx.save();
     hctx.font = 'bold 36px monospace';
     hctx.fillStyle = `rgba(255,220,0,${0.7 + 0.3 * Math.sin(Date.now()/80)})`;
     hctx.shadowColor = '#f80';
     hctx.shadowBlur = 20;
-    hctx.fillText('DRIFT', hud.width/2 - 55, hud.height - 50);
+    hctx.textAlign = 'center';
+    hctx.fillText('DRIFT', hud.width/2, hud.height - 50);
     hctx.restore();
   }
 
-  // Controls hint
+  // ---- Flash message (BEST LAP / FINISHED) ----
+  if (lapState.flashTimer > 0) {
+    const alpha = Math.min(1, lapState.flashTimer / 40);
+    hctx.save();
+    hctx.textAlign = 'center';
+    hctx.font = 'bold 52px monospace';
+    hctx.fillStyle = `rgba(255,255,0,${alpha})`;
+    hctx.shadowColor = '#f80';
+    hctx.shadowBlur = 30;
+    hctx.fillText(lapState.flash, hud.width/2, hud.height/2 - 20);
+    if (lapState.finished && lapState.lastLap !== null) {
+      hctx.font = 'bold 24px monospace';
+      hctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      hctx.shadowBlur = 0;
+      hctx.fillText(`Best lap: ${fmtTime(lapState.bestLap)}`, hud.width/2, hud.height/2 + 30);
+    }
+    hctx.restore();
+  }
+
+  // ---- Controls hint ----
   hctx.fillStyle = 'rgba(0,0,0,0.45)';
   hctx.fillRect(10, hud.height - 80, 260, 68);
   hctx.fillStyle = '#aaa';
   hctx.font = '12px monospace';
+  hctx.textAlign = 'left';
   hctx.fillText('WASD / Arrows  — drive', 18, hud.height - 60);
   hctx.fillText('Space          — handbrake / drift', 18, hud.height - 44);
   hctx.fillText('S while moving — brake', 18, hud.height - 28);
@@ -333,6 +507,12 @@ function update() {
   // ---- Integrate position ----
   car.x += car.vx;
   car.z += car.vz;
+
+  // ---- Boundary collision ----
+  resolveTrackBoundary();
+
+  // ---- Lap system ----
+  updateLap();
 
   // ---- Tire marks during drift ----
   if (car.drifting && spd > 0.1) {
