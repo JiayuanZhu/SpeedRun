@@ -62,6 +62,7 @@ const TIRE_MARK_LIFE = 120; // frames until fully faded (~2s at 60fps)
 const RX_MID = (TRACK_RX_OUTER + TRACK_RX_INNER) / 2; // 640
 const RY_MID = (TRACK_RY_OUTER + TRACK_RY_INNER) / 2; // 320
 const CHECKPOINT_RADIUS = 75;
+const SF_ANGLE = -Math.PI / 2; // start/finish line angle on ellipse (top)
 
 function cpPos(t) {
   return { x: RX_MID * Math.cos(t), y: RY_MID * Math.sin(t) };
@@ -77,6 +78,17 @@ const CHECKPOINTS = [
   cpPos(Math.PI),           // left
   cpPos(-3 * Math.PI / 4),  // upper-left
 ];
+
+// AI opponents
+const aiCars = [
+  { color: '#2060ff', angularSpeed: 0.008, t: 0,               accumulated: 0, laps: 0, x: 0, y: 0, angle: 0, width: 28, height: 14, drifting: false, driftBoostTimer: 0 },
+  { color: '#ff8800', angularSpeed: 0.009, t: Math.PI * 2 / 3, accumulated: 0, laps: 0, x: 0, y: 0, angle: 0, width: 28, height: 14, drifting: false, driftBoostTimer: 0 },
+  { color: '#00cc44', angularSpeed: 0.010, t: Math.PI * 4 / 3, accumulated: 0, laps: 0, x: 0, y: 0, angle: 0, width: 28, height: 14, drifting: false, driftBoostTimer: 0 },
+];
+// Pre-compute how far each AI starts from the SF line (so lap count is relative to SF crossings)
+for (const ai of aiCars) {
+  ai.initialOffset = ((ai.t - SF_ANGLE) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+}
 
 const lapState = {
   lap: 1,
@@ -137,6 +149,41 @@ function updateLapSystem() {
   }
 
   lapState.prevCarX = car.x;
+}
+
+function updateAI() {
+  for (const ai of aiCars) {
+    ai.t += ai.angularSpeed;
+    ai.accumulated += ai.angularSpeed;
+
+    const distFromSF = ai.initialOffset + ai.accumulated;
+    ai.laps = Math.floor(distFromSF / (Math.PI * 2));
+
+    ai.x = RX_MID * Math.cos(ai.t);
+    ai.y = RY_MID * Math.sin(ai.t);
+    // Tangent to ellipse: d/dt(RX_MID*cos t, RY_MID*sin t) = (-RX_MID*sin t, RY_MID*cos t)
+    ai.angle = Math.atan2(RY_MID * Math.cos(ai.t), -RX_MID * Math.sin(ai.t));
+  }
+}
+
+// Ranking: total laps-equivalent progress from SF line (higher = further ahead)
+function aiRaceScore(ai) {
+  return (ai.initialOffset + ai.accumulated) / (Math.PI * 2);
+}
+
+function playerRaceScore() {
+  const rawAngle = Math.atan2(car.y / RY_MID, car.x / RX_MID);
+  const progressInLap = ((rawAngle - SF_ANGLE) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2);
+  return (lapState.lap - 1) + progressInLap;
+}
+
+function getPlayerRank() {
+  const playerScore = playerRaceScore();
+  let rank = 1;
+  for (const ai of aiCars) {
+    if (aiRaceScore(ai) > playerScore) rank++;
+  }
+  return rank;
 }
 
 // Build ellipse path helper
@@ -209,16 +256,16 @@ function drawTireMarks() {
   }
 }
 
-function drawCar() {
+function drawCar(carObj, bodyColor) {
   ctx.save();
-  ctx.translate(car.x, car.y);
-  ctx.rotate(car.angle);
+  ctx.translate(carObj.x, carObj.y);
+  ctx.rotate(carObj.angle);
 
-  const w = car.width;
-  const h = car.height;
+  const w = carObj.width;
+  const h = carObj.height;
 
   // Car body
-  ctx.fillStyle = '#e10600';
+  ctx.fillStyle = bodyColor;
   ctx.beginPath();
   ctx.moveTo(w / 2, 0);
   ctx.lineTo(w / 4, -h / 2);
@@ -229,11 +276,11 @@ function drawCar() {
   ctx.fill();
 
   // Drift/boost outline
-  if (car.drifting) {
+  if (carObj.drifting) {
     ctx.strokeStyle = '#ff0';
     ctx.lineWidth = 2.5;
     ctx.stroke();
-  } else if (car.driftBoostTimer > 0) {
+  } else if (carObj.driftBoostTimer > 0) {
     ctx.strokeStyle = '#0cf';
     ctx.lineWidth = 2;
     ctx.stroke();
@@ -389,6 +436,7 @@ function update() {
   cam.y += (car.y - cam.y) * 0.1;
 
   updateLapSystem();
+  updateAI();
 }
 
 function render() {
@@ -399,17 +447,23 @@ function render() {
 
   drawTrack();
   drawTireMarks();
-  drawCar();
+  for (const ai of aiCars) drawCar(ai, ai.color);
+  drawCar(car, '#e10600');
 
   ctx.restore();
 
-  // HUD — speed bar
+  // HUD — speed + position
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(10, 10, 220, 36);
+  ctx.fillRect(10, 10, 220, 60);
   ctx.fillStyle = '#fff';
   ctx.font = '14px monospace';
   const dispSpd = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
   ctx.fillText(`Speed: ${(dispSpd * 60).toFixed(0)} km/h  ${car.onTrack ? '' : '[GRASS]'}`, 20, 32);
+  const rank = getPlayerRank();
+  const rankColors = ['#ffd700', '#c0c0c0', '#cd7f32', '#fff'];
+  ctx.fillStyle = rankColors[rank - 1] || '#fff';
+  ctx.font = 'bold 22px monospace';
+  ctx.fillText(`P${rank}/4`, 20, 58);
 
   // HUD — lap info (top-right area)
   const lapX = canvas.width - 240;
