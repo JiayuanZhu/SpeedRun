@@ -33,8 +33,11 @@ const KERB_WIDTH = 18;
 const car = {
   x: TRACK_CX,
   y: -(TRACK_RY_OUTER - TRACK_WIDTH / 2), // top of track
-  angle: 0,  // radians, 0 = right
-  speed: 0,
+  angle: 0,      // heading in radians, 0 = right
+  vx: 0,         // world-space velocity x
+  vy: 0,         // world-space velocity y
+  angularVel: 0, // rotational velocity
+  onTrack: true,
   width: 28,
   height: 14,
 };
@@ -145,11 +148,25 @@ function drawCar() {
   ctx.restore();
 }
 
-const TURN_SPEED = 0.03;
-const ACCEL = 0.15;
-const BRAKE = 0.25;
-const MAX_SPEED = 6;
-const FRICTION = 0.97;
+// Physics constants
+const ACCEL          = 0.28;   // acceleration force per frame
+const BRAKE_FORCE    = 0.45;   // braking deceleration per frame
+const MAX_SPEED_ROAD = 8.5;    // max speed on road
+const MAX_SPEED_GRASS= 3.5;    // max speed on grass
+const FRICTION_ROAD  = 0.987;  // longitudinal drag on road
+const FRICTION_GRASS = 0.93;   // heavy drag on grass
+const GRIP_ROAD      = 0.85;   // lateral velocity retained on road (lower = more grip)
+const GRIP_GRASS     = 0.65;   // less grip on grass (more sliding)
+const TURN_ACCEL     = 0.003;  // angular acceleration per frame
+const TURN_MAX       = 0.048;  // max angular velocity
+const ANGULAR_DAMP   = 0.80;   // angular velocity damping when not steering
+
+// Returns true if world point (x,y) is on the asphalt (between inner and outer ellipses)
+function isOnTrack(x, y) {
+  const outerNorm = (x / TRACK_RX_OUTER) ** 2 + (y / TRACK_RY_OUTER) ** 2;
+  const innerNorm = (x / TRACK_RX_INNER) ** 2 + (y / TRACK_RY_INNER) ** 2;
+  return outerNorm <= 1 && innerNorm >= 1;
+}
 
 function update() {
   const up    = keys['w'] || keys['W'] || keys['ArrowUp'];
@@ -157,16 +174,65 @@ function update() {
   const left  = keys['a'] || keys['A'] || keys['ArrowLeft'];
   const right = keys['d'] || keys['D'] || keys['ArrowRight'];
 
-  if (up)   car.speed = Math.min(car.speed + ACCEL, MAX_SPEED);
-  if (down) car.speed = Math.max(car.speed - BRAKE, -MAX_SPEED / 2);
+  car.onTrack = isOnTrack(car.x, car.y);
 
-  if (left)  car.angle -= TURN_SPEED * (car.speed !== 0 ? 1 : 0);
-  if (right) car.angle += TURN_SPEED * (car.speed !== 0 ? 1 : 0);
+  const maxSpeed = car.onTrack ? MAX_SPEED_ROAD : MAX_SPEED_GRASS;
+  const friction = car.onTrack ? FRICTION_ROAD  : FRICTION_GRASS;
+  const grip     = car.onTrack ? GRIP_ROAD      : GRIP_GRASS;
 
-  car.speed *= FRICTION;
+  // Current speed (signed, along heading)
+  const headX  = Math.cos(car.angle);
+  const headY  = Math.sin(car.angle);
+  const fwdSpd = car.vx * headX + car.vy * headY;
 
-  car.x += Math.cos(car.angle) * car.speed;
-  car.y += Math.sin(car.angle) * car.speed;
+  // Angular velocity steering — scales with forward speed for realistic feel
+  const speedNorm = Math.min(Math.abs(fwdSpd) / 2, 1);
+  if (left)  car.angularVel = Math.max(car.angularVel - TURN_ACCEL, -TURN_MAX);
+  if (right) car.angularVel = Math.min(car.angularVel + TURN_ACCEL,  TURN_MAX);
+  if (!left && !right) car.angularVel *= ANGULAR_DAMP;
+  car.angularVel *= 0.88; // always damp slightly
+  car.angle += car.angularVel * speedNorm;
+
+  // Acceleration along heading
+  if (up && fwdSpd < maxSpeed) {
+    const push = Math.min(ACCEL, maxSpeed - fwdSpd);
+    car.vx += headX * push;
+    car.vy += headY * push;
+  }
+
+  // Braking / reverse
+  if (down) {
+    if (fwdSpd > 0.1) {
+      // Braking while moving forward
+      car.vx -= headX * BRAKE_FORCE;
+      car.vy -= headY * BRAKE_FORCE;
+    } else if (fwdSpd > -(maxSpeed * 0.4)) {
+      // Reverse
+      car.vx += headX * (-ACCEL * 0.6);
+      car.vy += headY * (-ACCEL * 0.6);
+    }
+  }
+
+  // Grip: reduce lateral (sideways) velocity — velocity gradually aligns to heading
+  const latX    = -headY;
+  const latY    =  headX;
+  const latSpd  = car.vx * latX + car.vy * latY;
+  car.vx -= latX * latSpd * (1 - grip);
+  car.vy -= latY * latSpd * (1 - grip);
+
+  // Longitudinal friction (drag)
+  car.vx *= friction;
+  car.vy *= friction;
+
+  // Clamp to max speed
+  const curSpd = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
+  if (curSpd > maxSpeed) {
+    car.vx = (car.vx / curSpd) * maxSpeed;
+    car.vy = (car.vy / curSpd) * maxSpeed;
+  }
+
+  car.x += car.vx;
+  car.y += car.vy;
 
   // Camera smoothly follows car
   cam.x += (car.x - cam.x) * 0.1;
@@ -190,7 +256,8 @@ function render() {
   ctx.fillRect(10, 10, 160, 36);
   ctx.fillStyle = '#fff';
   ctx.font = '14px monospace';
-  ctx.fillText(`Speed: ${Math.abs(car.speed * 60).toFixed(0)} km/h`, 20, 32);
+  const dispSpd = Math.sqrt(car.vx * car.vx + car.vy * car.vy);
+  ctx.fillText(`Speed: ${(dispSpd * 60).toFixed(0)} km/h  ${car.onTrack ? '' : '[GRASS]'}`, 20, 32);
 }
 
 function loop() {
