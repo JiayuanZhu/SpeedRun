@@ -5,8 +5,34 @@ renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1a2e);
-scene.fog = new THREE.Fog(0x1a1a2e, 100, 350);
+scene.fog = new THREE.Fog(0x060612, 120, 380);
+
+// ---- Sky: canvas gradient + stars ----
+(function buildSky() {
+  const size = 512;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, size);
+  grad.addColorStop(0, '#000005');
+  grad.addColorStop(0.5, '#06061a');
+  grad.addColorStop(1, '#0d1a2e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  // Stars
+  const rng = (s => () => { s = Math.sin(s) * 43758.5453; return s - Math.floor(s); })(42);
+  for (let i = 0; i < 320; i++) {
+    const sx = rng() * size, sy = rng() * size * 0.7;
+    const r  = rng() * 1.2 + 0.2;
+    const a  = 0.4 + rng() * 0.6;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  scene.background = tex;
+})();
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
 
@@ -39,9 +65,33 @@ function buildTrack() {
     i === 0 ? hole.moveTo(x, y) : hole.lineTo(x, y);
   }
   shape.holes.push(hole);
+  // Road canvas texture: dark asphalt + subtle grid lines
+  const texSize = 256;
+  const tc = document.createElement('canvas');
+  tc.width = tc.height = texSize;
+  const tctx = tc.getContext('2d');
+  tctx.fillStyle = '#3a3a3a';
+  tctx.fillRect(0, 0, texSize, texSize);
+  tctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  tctx.lineWidth = 1;
+  for (let g = 0; g < texSize; g += 32) {
+    tctx.beginPath(); tctx.moveTo(g, 0); tctx.lineTo(g, texSize); tctx.stroke();
+    tctx.beginPath(); tctx.moveTo(0, g); tctx.lineTo(texSize, g); tctx.stroke();
+  }
+  // Subtle noise-like speckle
+  for (let p = 0; p < 2000; p++) {
+    const px = Math.random() * texSize, py = Math.random() * texSize;
+    const br = Math.random() * 30 + 20;
+    tctx.fillStyle = `rgba(${br},${br},${br},0.3)`;
+    tctx.fillRect(px, py, 1, 1);
+  }
+  const roadTex = new THREE.CanvasTexture(tc);
+  roadTex.wrapS = roadTex.wrapT = THREE.RepeatWrapping;
+  roadTex.repeat.set(8, 8);
+
   const mesh = new THREE.Mesh(
     new THREE.ShapeGeometry(shape, SEG),
-    new THREE.MeshLambertMaterial({ color: 0x444444 })
+    new THREE.MeshLambertMaterial({ map: roadTex })
   );
   mesh.rotation.x = -Math.PI / 2;
   mesh.receiveShadow = true;
@@ -65,6 +115,36 @@ function buildKerb(rx, rz) {
   }
 }
 
+function buildGuardrails(rx, rz, postCount) {
+  const postGeo = new THREE.BoxGeometry(0.3, 1.2, 0.3);
+  const railGeo = new THREE.BoxGeometry(0.12, 0.25, 0.12); // will be scaled per-segment
+  for (let i = 0; i < postCount; i++) {
+    const t  = (i / postCount) * Math.PI * 2;
+    const px = rx * Math.cos(t);
+    const pz = rz * Math.sin(t);
+    const color = i % 2 === 0 ? 0xdd1111 : 0xffffff;
+    const post = new THREE.Mesh(postGeo,
+      new THREE.MeshLambertMaterial({ color }));
+    post.position.set(px, 0.6, pz);
+    post.castShadow = true;
+    scene.add(post);
+
+    // Horizontal rail connecting to next post
+    const t2  = ((i + 1) / postCount) * Math.PI * 2;
+    const nx2 = rx * Math.cos(t2), nz2 = rz * Math.sin(t2);
+    const mx  = (px + nx2) / 2, mz = (pz + nz2) / 2;
+    const len = Math.sqrt((nx2-px)**2 + (nz2-pz)**2);
+    const ang = Math.atan2(nz2 - pz, nx2 - px);
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(len, 0.12, 0.12),
+      new THREE.MeshLambertMaterial({ color: 0xcccccc })
+    );
+    rail.position.set(mx, 0.9, mz);
+    rail.rotation.y = -ang;
+    scene.add(rail);
+  }
+}
+
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(400, 400),
   new THREE.MeshLambertMaterial({ color: 0x2d6a2d })
@@ -73,6 +153,8 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.05;
 scene.add(ground);
 buildTrack();
+buildGuardrails(TRACK_RX + TRACK_W / 2 + 0.6, TRACK_RZ + TRACK_W / 2 + 0.6, 80);
+buildGuardrails(TRACK_RX - TRACK_W / 2 - 0.6, TRACK_RZ - TRACK_W / 2 - 0.6, 60);
 
 const sfLine = new THREE.Mesh(
   new THREE.PlaneGeometry(TRACK_W, 3),
@@ -113,6 +195,11 @@ for (const [wx, wy, wz] of [[1.2,-0.3,1.1],[1.2,-0.3,-1.1],[-1.2,-0.3,1.1],[-1.2
   carGroup.add(w);
 }
 scene.add(carGroup);
+
+// Exhaust point light (rear of car)
+const exhaustLight = new THREE.PointLight(0xff6600, 0, 6);
+exhaustLight.position.set(-2.2, 0.2, 0);
+carGroup.add(exhaustLight);
 
 // ---- Physics state ----
 const car = {
@@ -179,6 +266,7 @@ function resolveTrackBoundary() {
       car.vz -= 2 * dot * nnz;
     }
     car.vx *= 0.35; car.vz *= 0.35;
+    shakeTimer = 18; shakeAmt = 0.45;
     hit = true;
   } else if (ni < 1) {
     // Inside inner wall
@@ -194,6 +282,7 @@ function resolveTrackBoundary() {
       car.vz -= 2 * dot * nnz;
     }
     car.vx *= 0.35; car.vz *= 0.35;
+    shakeTimer = 18; shakeAmt = 0.45;
     hit = true;
   }
 
@@ -294,6 +383,65 @@ function addTireMarks(x, z, angle) {
   prevMarkR = addSeg(prevMarkR, rrx, rrz);
 }
 
+// ---- Smoke particle system ----
+const SMOKE_MAX = 600;
+const smokeData = {
+  pos:  new Float32Array(SMOKE_MAX * 3),
+  vel:  new Float32Array(SMOKE_MAX * 3), // world-space drift
+  life: new Float32Array(SMOKE_MAX),     // 0=dead, 1=fresh
+  count: 0,
+  head: 0,  // ring-buffer head
+};
+const smokeGeo = new THREE.BufferGeometry();
+const smokePosAttr = new THREE.BufferAttribute(smokeData.pos, 3);
+smokePosAttr.setUsage(THREE.DynamicDrawUsage);
+smokeGeo.setAttribute('position', smokePosAttr);
+smokeGeo.setDrawRange(0, 0);
+
+// Canvas sprite for smoke puff
+const sc = document.createElement('canvas'); sc.width = sc.height = 64;
+const sctx = sc.getContext('2d');
+const sg = sctx.createRadialGradient(32,32,2,32,32,30);
+sg.addColorStop(0, 'rgba(200,200,200,0.9)');
+sg.addColorStop(1, 'rgba(180,180,180,0)');
+sctx.fillStyle = sg;
+sctx.beginPath(); sctx.arc(32,32,30,0,Math.PI*2); sctx.fill();
+const smokeTex = new THREE.CanvasTexture(sc);
+
+const smokePoints = new THREE.Points(smokeGeo, new THREE.PointsMaterial({
+  map: smokeTex, size: 2.0, transparent: true, opacity: 0.55,
+  depthWrite: false, sizeAttenuation: true,
+}));
+scene.add(smokePoints);
+
+function spawnSmoke(x, y, z) {
+  const i = smokeData.head % SMOKE_MAX;
+  smokeData.pos[i*3]   = x;
+  smokeData.pos[i*3+1] = y;
+  smokeData.pos[i*3+2] = z;
+  smokeData.vel[i*3]   = (Math.random()-0.5)*0.03;
+  smokeData.vel[i*3+1] = 0.02 + Math.random()*0.03;
+  smokeData.vel[i*3+2] = (Math.random()-0.5)*0.03;
+  smokeData.life[i]    = 1.0;
+  smokeData.head++;
+  smokeData.count = Math.min(smokeData.count + 1, SMOKE_MAX);
+}
+
+function updateSmoke() {
+  let alive = 0;
+  for (let i = 0; i < SMOKE_MAX; i++) {
+    if (smokeData.life[i] <= 0) continue;
+    smokeData.life[i] -= 0.018;
+    smokeData.pos[i*3]   += smokeData.vel[i*3];
+    smokeData.pos[i*3+1] += smokeData.vel[i*3+1];
+    smokeData.pos[i*3+2] += smokeData.vel[i*3+2];
+    alive++;
+  }
+  smokePosAttr.needsUpdate = true;
+  smokeGeo.setDrawRange(0, SMOKE_MAX);
+  smokePoints.material.opacity = 0.55;
+}
+
 // ---- Game state machine ----
 // 'intro' → 'countdown' → 'racing' → 'finished'
 let gameState = 'intro';
@@ -316,6 +464,10 @@ function getCountdownPhase() {
   if (elapsed < 4000) return { label: 'GO!', color: '#00ff66', elapsed };
   return { label: '', color: '', done: true, elapsed };
 }
+
+// ---- Screen shake ----
+let shakeTimer = 0;
+let shakeAmt   = 0;
 
 // ---- Input ----
 const keys = {};
@@ -818,13 +970,32 @@ function update() {
     prevMarkR = null;
   }
 
+  // ---- Smoke particles (drift rear wheels) ----
+  if (car.drifting && spd > 0.12) {
+    const rearX = car.x - cosA * 1.8;
+    const rearZ = car.z + sinA * 1.8;
+    for (let s = 0; s < 3; s++) {
+      spawnSmoke(
+        rearX + sinA * (Math.random() - 0.5) * 1.6,
+        0.15,
+        rearZ + cosA * (Math.random() - 0.5) * 1.6
+      );
+    }
+  }
+  updateSmoke();
+
+  // ---- Exhaust flash (low-speed acceleration = launch) ----
+  const launching = up && spd < 0.25 && fwdVel < 0.2;
+  exhaustLight.intensity = launching
+    ? 2.5 + Math.random() * 1.5
+    : Math.max(0, exhaustLight.intensity - 0.3);
+
   // ---- Update mesh ----
-  // Visual body tilt toward drift direction (roll)
   const rollAngle = -latVel * car.driftFactor * 0.4;
   carGroup.position.set(car.x, 0.3, car.z);
   carGroup.rotation.set(0, car.angle - Math.PI / 2, rollAngle, 'YXZ');
 
-  // ---- Camera follow ----
+  // ---- Camera follow + screen shake ----
   const camDist = 14 + spd * 4;
   const camH    = 5  + spd * 2;
   const bx = car.x - cosA * camDist;
@@ -833,7 +1004,15 @@ function update() {
   const desiredTarget = new THREE.Vector3(car.x + cosA * 5, 0.5, car.z - sinA * 5);
   camPos.lerp(desiredCam, 0.08);
   camTarget.lerp(desiredTarget, 0.12);
-  camera.position.copy(camPos);
+
+  let shakeOffX = 0, shakeOffY = 0;
+  if (shakeTimer > 0) {
+    const s = shakeAmt * (shakeTimer / 18);
+    shakeOffX = (Math.random() - 0.5) * s;
+    shakeOffY = (Math.random() - 0.5) * s;
+    shakeTimer--;
+  }
+  camera.position.set(camPos.x + shakeOffX, camPos.y + shakeOffY, camPos.z + shakeOffX * 0.5);
   camera.lookAt(camTarget);
 }
 
