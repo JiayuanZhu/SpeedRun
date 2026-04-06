@@ -41,18 +41,28 @@ scene.add(moonLight);
 const TRACK_W       = 14;
 const TRACK_SAMPLES = 200;
 
-// Control points — clockwise when viewed from above.
-// t=0 is the start/finish line at (60, 0, 0); curve first heads south-west.
+// Control points — Silverstone F1 circuit (TUM dataset, scaled ×2.5).
+// t=0 starts at T1 Vale corner.
+const SCALE = 2.5;
 const trackPoints = [
-  new THREE.Vector3( 60,  0,   0),   // start/finish
-  new THREE.Vector3( 40,  0, -45),   // right lower bend
-  new THREE.Vector3(  0,  0, -65),   // bottom curve (fast)
-  new THREE.Vector3(-40,  0, -45),   // left lower bend
-  new THREE.Vector3(-60,  0,   0),   // leftmost point
-  new THREE.Vector3(-30,  0,  55),   // left upper bend
-  new THREE.Vector3( 20,  0,  70),   // hairpin apex (slow)
-  new THREE.Vector3( 70,  0,  55),   // north-east straight
-  new THREE.Vector3( 80,  0,  25),   // right bend exit
+  new THREE.Vector3(  -24.9*SCALE, 0,  -18.4*SCALE),  // T1  Vale
+  new THREE.Vector3(  -14.3*SCALE, 0,   -3.7*SCALE),  // T2  Club
+  new THREE.Vector3(    2.0*SCALE, 0,    0.4*SCALE),  // T3  Abbey
+  new THREE.Vector3(   14.9*SCALE, 0,    4.6*SCALE),  // T4  Farm
+  new THREE.Vector3(   17.7*SCALE, 0,   13.7*SCALE),  // T5  Village
+  new THREE.Vector3(    4.0*SCALE, 0,   25.5*SCALE),  // T6  Loop
+  new THREE.Vector3(  -10.2*SCALE, 0,   36.4*SCALE),  // T7  Aintree
+  new THREE.Vector3(  -19.8*SCALE, 0,   31.2*SCALE),  // T8  Wellington
+  new THREE.Vector3(   -9.4*SCALE, 0,   45.1*SCALE),  // T9  Luffield
+  new THREE.Vector3(    8.5*SCALE, 0,   47.4*SCALE),  // T10 Woodcote
+  new THREE.Vector3(   21.8*SCALE, 0,   39.7*SCALE),  // T11 Copse
+  new THREE.Vector3(   24.2*SCALE, 0,   21.8*SCALE),  // T12 Maggotts
+  new THREE.Vector3(   25.4*SCALE, 0,    4.7*SCALE),  // T13 Becketts
+  new THREE.Vector3(   20.8*SCALE, 0,   -9.1*SCALE),  // T14 Chapel
+  new THREE.Vector3(   12.7*SCALE, 0,  -25.2*SCALE),  // T15 Hangar Straight
+  new THREE.Vector3(    4.3*SCALE, 0,  -41.3*SCALE),  // T16 Stowe
+  new THREE.Vector3(   -8.3*SCALE, 0,  -43.2*SCALE),  // T17 Vale approach
+  new THREE.Vector3(  -20.1*SCALE, 0,  -29.9*SCALE),  // T18 Club approach
 ];
 const trackCurve  = new THREE.CatmullRomCurve3(trackPoints, true, 'catmullrom', 0.5);
 const CURVE_LENGTH = trackCurve.getLength();
@@ -192,9 +202,10 @@ buildTrack();
     new THREE.PlaneGeometry(TRACK_W, 3),
     new THREE.MeshLambertMaterial({ color: 0xffffff })
   );
+  const sf0 = trackCurve.getPoint(0);
   sfLine.rotation.x = -Math.PI / 2;
   sfLine.rotation.y = -sfAngle - Math.PI / 2;
-  sfLine.position.set(60, 0.01, 0);
+  sfLine.position.set(sf0.x, 0.01, sf0.z);
   scene.add(sfLine);
 })();
 
@@ -407,15 +418,16 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', fun
 (function() {
   const tan0 = trackCurve.getTangent(0);
   const gry  = -Math.atan2(tan0.z, tan0.x);  // span perpendicular to track
+  const _gp0 = trackCurve.getPoint(0);
   loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overhead.glb', function(model) {
     model.scale.setScalar(4);
-    model.position.set(60, 5, 0);
+    model.position.set(_gp0.x, 5, _gp0.z);
     model.rotation.y = gry;
     scene.add(model);
   });
   loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overheadLights.glb', function(model) {
     model.scale.setScalar(4);
-    model.position.set(60, 5.1, 0);
+    model.position.set(_gp0.x, 5.1, _gp0.z);
     model.rotation.y = gry;
     scene.add(model);
   });
@@ -465,9 +477,10 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/bannerTowerGreen.glb', fu
 
 // ---- Physics state ----
 const _st0 = trackCurve.getTangent(0);
+const _sp0 = trackCurve.getPoint(0);
 const car = {
-  x:          60,
-  z:          0,
+  x:          _sp0.x,
+  z:          _sp0.z,
   angle:      Math.atan2(-_st0.z, _st0.x),  // heading matching curve direction
   vx:         0,
   vz:         0,
