@@ -347,6 +347,43 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/fenceStraight.glb', funct
   }
 });
 
+// ---- Phase E: Flags + Light Posts ----
+// Checkered flags on both sides of the start/finish line (z = ±8 at x = TRACK_RX)
+const flagPositions = [
+  { x: TRACK_RX, z:  8, ry: 0 },   // outer side of track
+  { x: TRACK_RX, z: -8, ry: Math.PI },  // inner side of track
+];
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/flagCheckers.glb', function(flagTemplate) {
+  flagPositions.forEach(function(p) {
+    const flag = flagTemplate.clone();
+    flag.scale.setScalar(3);
+    flag.position.set(p.x, 0, p.z);
+    flag.rotation.y = p.ry;
+    scene.add(flag);
+  });
+});
+
+// Light posts: 4 along the right straight — 2 inner, 2 outer, at z = ±15
+const LIGHT_INNER_X = TRACK_RX - TRACK_W / 2 - 3;  // ~52
+const LIGHT_OUTER_X = TRACK_RX + TRACK_W / 2 + 3;  // ~68
+const lightPostPositions = [
+  { x: LIGHT_INNER_X, z:  15, ry: 0 },
+  { x: LIGHT_INNER_X, z: -15, ry: 0 },
+  { x: LIGHT_OUTER_X, z:  15, ry: Math.PI },
+  { x: LIGHT_OUTER_X, z: -15, ry: Math.PI },
+];
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', function(lightTemplate) {
+  lightPostPositions.forEach(function(p) {
+    const lp = lightTemplate.clone();
+    lp.scale.setScalar(3);
+    lp.position.set(p.x, 0, p.z);
+    lp.rotation.y = p.ry;
+    scene.add(lp);
+  });
+});
+
 // ---- Physics state ----
 const car = {
   x: TRACK_RX,
