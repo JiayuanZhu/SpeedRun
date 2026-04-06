@@ -196,6 +196,27 @@ for (const [wx, wy, wz] of [[1.2,-0.3,1.1],[1.2,-0.3,-1.1],[-1.2,-0.3,1.1],[-1.2
 }
 scene.add(carGroup);
 
+// ---- GLB loader helper ----
+function loadGLB(path, callback) {
+  const loader = new THREE.GLTFLoader();
+  loader.load(path, function(gltf) {
+    callback(gltf.scene);
+  }, undefined, function(err) {
+    console.error('GLB load error:', path, err);
+  });
+}
+
+// Async load player car GLB; hide placeholder meshes once loaded
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/raceCarRed.glb', function(model) {
+  model.scale.setScalar(2);
+  model.rotation.y = Math.PI;
+  // Hide original box meshes (keep exhaustLight which is a PointLight)
+  carGroup.children.forEach(function(child) {
+    if (child.isMesh) child.visible = false;
+  });
+  carGroup.add(model);
+});
+
 // Exhaust point light (rear of car)
 const exhaustLight = new THREE.PointLight(0xff6600, 0, 6);
 exhaustLight.position.set(-2.2, 0.2, 0);
