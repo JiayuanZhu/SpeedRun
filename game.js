@@ -18,9 +18,9 @@ scene.fog = new THREE.Fog(0x000510, 150, 450);
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
 
 // ---- Lighting (night / moonlight) ----
-const ambientLight = new THREE.AmbientLight(0x223355, 0.4);
+const ambientLight = new THREE.AmbientLight(0x334466, 0.6);
 scene.add(ambientLight);
-const moonLight = new THREE.DirectionalLight(0x4466aa, 0.8);
+const moonLight = new THREE.DirectionalLight(0x4466aa, 1.2);
 moonLight.position.set(-100, 200, -50);
 moonLight.castShadow = true;
 scene.add(moonLight);
@@ -121,7 +121,7 @@ function buildTrack() {
   geo.setIndex(indices);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo,
-    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x333333, emissive: 0x111111 }));
+    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x555555, emissive: 0x222222 }));
   mesh.receiveShadow = true;
   scene.add(mesh);
 
@@ -246,13 +246,13 @@ function buildRunoffArea() {
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x444444 })));
+  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x3a3a3a })));
 }
 
 // ---- Ground (night dark green) ----
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(600, 600),
-  new THREE.MeshLambertMaterial({ color: 0x1a3a1a })
+  new THREE.MeshLambertMaterial({ color: 0x1a4a1a })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.05;
