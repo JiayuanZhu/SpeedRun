@@ -114,7 +114,7 @@ function buildTrack() {
   geo.setIndex(indices);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo,
-    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x1e1e1e, emissive: 0x1e1e1e }));
+    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x333333, emissive: 0x111111 }));
   mesh.receiveShadow = true;
   scene.add(mesh);
 
@@ -245,7 +245,7 @@ function buildRunoffArea() {
 // ---- Ground (night dark green) ----
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(600, 600),
-  new THREE.MeshLambertMaterial({ color: 0x0a1a0a })
+  new THREE.MeshLambertMaterial({ color: 0x1a3a1a })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.05;
@@ -297,6 +297,14 @@ for (const [wx, wy, wz] of [[1.2,-0.3,1.1],[1.2,-0.3,-1.1],[-1.2,-0.3,1.1],[-1.2
   w.castShadow = true;
   carGroup.add(w);
 }
+// Shadow blob under car (circle, y=0.02, diameter 3)
+const shadowBlobMesh = new THREE.Mesh(
+  new THREE.CircleGeometry(1.5, 16),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false })
+);
+shadowBlobMesh.rotation.x = -Math.PI / 2;
+shadowBlobMesh.position.y = 0.02;
+carGroup.add(shadowBlobMesh);
 scene.add(carGroup);
 
 // ---- GLB loader helper ----
@@ -316,6 +324,9 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/raceCarRed.glb', function
   carGroup.children.forEach(function(child) {
     if (child.isMesh) child.visible = false;
   });
+  // Align model bottom to y=0 in carGroup local space
+  const bbox = new THREE.Box3().setFromObject(model);
+  model.position.y -= bbox.min.y;
   carGroup.add(model);
 });
 
@@ -345,6 +356,9 @@ const aiCars = AI_CONFIGS.map(function(cfg, idx) {
     group.children.forEach(function(child) {
       if (child.isMesh) child.visible = false;
     });
+    // Align model bottom to y=0 in group local space
+    const bbox = new THREE.Box3().setFromObject(model);
+    model.position.y -= bbox.min.y;
     group.add(model);
   });
 
@@ -357,7 +371,7 @@ const aiCars = AI_CONFIGS.map(function(cfg, idx) {
   // Set initial position along track
   const aiPt0  = trackCurve.getPoint(cfg.startT);
   const aiTan0 = trackCurve.getTangent(cfg.startT);
-  group.position.set(aiPt0.x, 0.3, aiPt0.z);
+  group.position.set(aiPt0.x, 0, aiPt0.z);
   group.rotation.y = Math.atan2(-aiTan0.z, aiTan0.x) - Math.PI / 2;
 
   return aiObj;
@@ -369,7 +383,7 @@ function updateAICars() {
     const pt    = trackCurve.getPoint(ai.trackT);
     const tan   = trackCurve.getTangent(ai.trackT);
     const angle = Math.atan2(-tan.z, tan.x);
-    ai.group.position.set(pt.x, 0.3, pt.z);
+    ai.group.position.set(pt.x, 0, pt.z);
     ai.group.rotation.y = angle - Math.PI / 2;
   });
 }
@@ -634,7 +648,7 @@ const car = {
 };
 
 // Place car mesh at track start immediately (not just when racing begins)
-carGroup.position.set(car.x, 0.3, car.z);
+carGroup.position.set(car.x, 0, car.z);
 carGroup.rotation.set(0, car.angle - Math.PI / 2, 0, 'YXZ');
 
 // Tuning
@@ -903,7 +917,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // ---- Camera ----
-let camPos    = new THREE.Vector3(_sp0.x + 14, 8, _sp0.z);
+let camPos    = new THREE.Vector3(_sp0.x + 10, 12, _sp0.z);
 let camTarget = new THREE.Vector3(_sp0.x, 0.5, _sp0.z);
 camera.position.copy(camPos);
 camera.lookAt(camTarget);
@@ -1250,7 +1264,7 @@ function update() {
     const t      = performance.now() / 4000;
     const orbitX = _sp0.x + Math.cos(t) * 20;
     const orbitZ = _sp0.z + Math.sin(t) * 14;
-    camPos.lerp(new THREE.Vector3(orbitX, 8, orbitZ), 0.02);
+    camPos.lerp(new THREE.Vector3(orbitX, 12, orbitZ), 0.02);
     camTarget.lerp(new THREE.Vector3(_sp0.x, 0, _sp0.z), 0.05);
     camera.position.copy(camPos);
     camera.lookAt(camTarget);
@@ -1409,12 +1423,12 @@ function update() {
 
   // ---- Update mesh ----
   const rollAngle = -latVel * car.driftFactor * 0.4;
-  carGroup.position.set(car.x, 0.3, car.z);
+  carGroup.position.set(car.x, 0, car.z);
   carGroup.rotation.set(0, car.angle - Math.PI / 2, rollAngle, 'YXZ');
 
   // ---- Camera follow + screen shake ----
-  const camDist = 14 + spd * 4;
-  const camH    = 5  + spd * 2;
+  const camDist = 10 + spd * 4;
+  const camH    = 12 + spd * 1;
   const bx = car.x - cosA * camDist;
   const bz = car.z + sinA * camDist;
   const desiredCam    = new THREE.Vector3(bx, camH, bz);
