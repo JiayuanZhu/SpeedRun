@@ -73,7 +73,7 @@ function buildTrack() {
   const tc = document.createElement('canvas');
   tc.width = tc.height = texSize;
   const tctx = tc.getContext('2d');
-  tctx.fillStyle = '#333333';
+  tctx.fillStyle = '#222222';
   tctx.fillRect(0, 0, texSize, texSize);
   tctx.strokeStyle = 'rgba(255,255,255,0.06)';
   tctx.lineWidth = 1;
@@ -114,18 +114,20 @@ function buildTrack() {
   geo.setIndex(indices);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo,
-    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x333333, emissive: 0x111111 }));
+    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x2a2a2a, emissive: 0x111111 }));
   mesh.receiveShadow = true;
   scene.add(mesh);
 
   buildRumbleStrips();
   buildCenterLine();
+  buildTrackEdgeLines();
+  buildRunoffArea();
 }
 
 // ---- Rumble strips (red/white alternating on both edges) ----
 function buildRumbleStrips() {
   const positions = [], colors = [];
-  const hw = TRACK_W / 2, sw = 2;  // strip width = 2 units
+  const hw = TRACK_W / 2, sw = 2.5;  // strip width = 2.5 units
   for (let i = 0; i < TRACK_SAMPLES; i++) {
     const t0 = i / TRACK_SAMPLES;
     const t1 = (i + 1) / TRACK_SAMPLES;
@@ -137,7 +139,7 @@ function buildRumbleStrips() {
     const nx1  = -tan1.z, nz1 = tan1.x;
 
     const isRed = i % 2 === 0;
-    const cr = 1.0, cg = isRed ? 0.0 : 1.0, cb = isRed ? 0.0 : 1.0;
+    const cr = isRed ? 0.933 : 1.0, cg = isRed ? 0.067 : 1.0, cb = isRed ? 0.067 : 1.0;
 
     // Both left (+nx) and right (-nx) sides
     for (const s of [1, -1]) {
@@ -146,8 +148,8 @@ function buildRumbleStrips() {
       const ox0 = p0.x + s*nx0*(hw+sw),  oz0 = p0.z + s*nz0*(hw+sw);
       const ox1 = p1.x + s*nx1*(hw+sw),  oz1 = p1.z + s*nz1*(hw+sw);
       positions.push(
-        ix0,0.02,iz0, ix1,0.02,iz1, ox0,0.02,oz0,
-        ix1,0.02,iz1, ox1,0.02,oz1, ox0,0.02,oz0
+        ix0,0.03,iz0, ix1,0.03,iz1, ox0,0.03,oz0,
+        ix1,0.03,iz1, ox1,0.03,oz1, ox0,0.03,oz0
       );
       for (let v = 0; v < 6; v++) colors.push(cr, cg, cb);
     }
@@ -182,6 +184,62 @@ function buildCenterLine() {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff })));
+}
+
+// ---- Track edge white boundary lines ----
+function buildTrackEdgeLines() {
+  const positions = [];
+  const hw = TRACK_W / 2;
+  const lw = 0.5;
+  for (let i = 0; i < TRACK_SAMPLES; i++) {
+    const t0 = i / TRACK_SAMPLES;
+    const t1 = (i + 1) / TRACK_SAMPLES;
+    const p0 = trackCurve.getPoint(t0), p1 = trackCurve.getPoint(t1);
+    const tan0 = trackCurve.getTangent(t0), tan1 = trackCurve.getTangent(t1);
+    const nx0 = -tan0.z, nz0 = tan0.x;
+    const nx1 = -tan1.z, nz1 = tan1.x;
+    for (const s of [1, -1]) {
+      const ix0 = p0.x + s*nx0*(hw-lw), iz0 = p0.z + s*nz0*(hw-lw);
+      const ox0 = p0.x + s*nx0*hw,      oz0 = p0.z + s*nz0*hw;
+      const ix1 = p1.x + s*nx1*(hw-lw), iz1 = p1.z + s*nz1*(hw-lw);
+      const ox1 = p1.x + s*nx1*hw,      oz1 = p1.z + s*nz1*hw;
+      positions.push(
+        ix0,0.025,iz0, ix1,0.025,iz1, ox0,0.025,oz0,
+        ix1,0.025,iz1, ox1,0.025,oz1, ox0,0.025,oz0
+      );
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xeeeeee })));
+}
+
+// ---- Run-off area (lighter asphalt outside kerbs) ----
+function buildRunoffArea() {
+  const positions = [];
+  const kerbOuter = TRACK_W / 2 + 2.5;
+  const runW = 5;
+  for (let i = 0; i < TRACK_SAMPLES; i++) {
+    const t0 = i / TRACK_SAMPLES;
+    const t1 = (i + 1) / TRACK_SAMPLES;
+    const p0 = trackCurve.getPoint(t0), p1 = trackCurve.getPoint(t1);
+    const tan0 = trackCurve.getTangent(t0), tan1 = trackCurve.getTangent(t1);
+    const nx0 = -tan0.z, nz0 = tan0.x;
+    const nx1 = -tan1.z, nz1 = tan1.x;
+    for (const s of [1, -1]) {
+      const ix0 = p0.x + s*nx0*kerbOuter,        iz0 = p0.z + s*nz0*kerbOuter;
+      const ox0 = p0.x + s*nx0*(kerbOuter+runW), oz0 = p0.z + s*nz0*(kerbOuter+runW);
+      const ix1 = p1.x + s*nx1*kerbOuter,        iz1 = p1.z + s*nz1*kerbOuter;
+      const ox1 = p1.x + s*nx1*(kerbOuter+runW), oz1 = p1.z + s*nz1*(kerbOuter+runW);
+      positions.push(
+        ix0,-0.01,iz0, ix1,-0.01,iz1, ox0,-0.01,oz0,
+        ix1,-0.01,iz1, ox1,-0.01,oz1, ox0,-0.01,oz0
+      );
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x444444 })));
 }
 
 // ---- Ground (night dark green) ----
@@ -361,7 +419,7 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/grandStandCovered.glb', f
 
 // ---- Inner barriers ----
 loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', function(tmpl) {
-  const COUNT = 20;
+  const COUNT = 36;
   for (let i = 0; i < COUNT; i++) {
     const t       = i / COUNT;
     const barrier = tmpl.clone();
@@ -374,7 +432,7 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', function
 
 // ---- Outer fences ----
 loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/fenceStraight.glb', function(tmpl) {
-  const COUNT = 24;
+  const COUNT = 30;
   for (let i = 0; i < COUNT; i++) {
     const t     = i / COUNT;
     const fence = tmpl.clone();
@@ -398,19 +456,32 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/flagCheckers.glb', functi
   });
 });
 
-// ---- Light posts near start/finish ----
+// ---- Light posts around track + PointLights ----
 loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', function(tmpl) {
-  [
+  const postPositions = [
     { t: 0.00, off:  TRACK_W / 2 + 4 },
     { t: 0.00, off: -(TRACK_W / 2 + 4) },
     { t: 0.06, off:  TRACK_W / 2 + 4 },
     { t: 0.06, off: -(TRACK_W / 2 + 4) },
-  ].forEach(function(d) {
+    { t: 0.14, off:  TRACK_W / 2 + 4 },
+    { t: 0.22, off: -(TRACK_W / 2 + 4) },
+    { t: 0.33, off:  TRACK_W / 2 + 4 },
+    { t: 0.45, off: -(TRACK_W / 2 + 4) },
+    { t: 0.56, off:  TRACK_W / 2 + 4 },
+    { t: 0.67, off: -(TRACK_W / 2 + 4) },
+    { t: 0.78, off:  TRACK_W / 2 + 4 },
+    { t: 0.89, off: -(TRACK_W / 2 + 4) },
+  ];
+  postPositions.forEach(function(d) {
     const lp = tmpl.clone();
     lp.scale.setScalar(3);
-    lp.position.copy(trkPt(d.t, d.off));
+    const worldPt = trkPt(d.t, d.off);
+    lp.position.copy(worldPt);
     lp.rotation.y = trkFacing(d.t, d.off > 0 ? Math.PI : 0);
     scene.add(lp);
+    const pl = new THREE.PointLight(0xffcc66, 0.9, 45);
+    pl.position.set(worldPt.x, 7, worldPt.z);
+    scene.add(pl);
   });
 });
 
@@ -437,6 +508,20 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', fun
 loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/pitsGarage.glb', function(model) {
   model.scale.setScalar(3);
   model.position.copy(trkPt(0, -(TRACK_W / 2 + 15)));
+  model.rotation.y = trkFacing(0, Math.PI / 2);
+  scene.add(model);
+});
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/pitsGarage.glb', function(model) {
+  model.scale.setScalar(3);
+  model.position.copy(trkPt(0.03, -(TRACK_W / 2 + 15)));
+  model.rotation.y = trkFacing(0, Math.PI / 2);
+  scene.add(model);
+});
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/pitsOffice.glb', function(model) {
+  model.scale.setScalar(3);
+  model.position.copy(trkPt(0.97, -(TRACK_W / 2 + 15)));
   model.rotation.y = trkFacing(0, Math.PI / 2);
   scene.add(model);
 });
@@ -474,6 +559,56 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/bannerTowerGreen.glb', fu
     scene.add(tower);
   });
 });
+
+// ---- Countdown lights (5 red spheres above start/finish) ----
+(function() {
+  const sfPt  = trackCurve.getPoint(0);
+  const sfTan = trackCurve.getTangent(0);
+  const nx = -sfTan.z, nz = sfTan.x;
+  const mat = new THREE.MeshLambertMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 1.0 });
+  for (let i = 0; i < 5; i++) {
+    const offset = (i - 2) * 2.4;
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 8), mat.clone());
+    sphere.position.set(
+      sfPt.x + sfTan.x * 4 + nx * offset,
+      5.5,
+      sfPt.z + sfTan.z * 4 + nz * offset
+    );
+    scene.add(sphere);
+    const pl = new THREE.PointLight(0xff2200, 0.6, 10);
+    pl.position.copy(sphere.position);
+    scene.add(pl);
+  }
+})();
+
+// ---- Grandstand audience seat colors ----
+(function() {
+  const gsData = [
+    { t: 0.18, off:  26 },
+    { t: 0.38, off:  26 },
+    { t: 0.72, off: -26 },
+    { t: 0.88, off: -26 },
+  ];
+  const palette = [0xff6600, 0x0055cc, 0x00aa44, 0xffcc00, 0xcc0044, 0x009999];
+  gsData.forEach(function(d, gi) {
+    const base   = trkPt(d.t, d.off);
+    const facing = trkFacing(d.t, d.off > 0 ? Math.PI : 0);
+    const fwdX   = Math.cos(facing), fwdZ = Math.sin(facing);
+    for (let row = 0; row < 3; row++) {
+      const seats = new THREE.Mesh(
+        new THREE.BoxGeometry(18, 1.0, 2.5),
+        new THREE.MeshLambertMaterial({ color: palette[(gi * 3 + row) % palette.length] })
+      );
+      seats.position.set(
+        base.x + fwdX * (row * 2.8 - 2),
+        1.2 + row * 1.6,
+        base.z + fwdZ * (row * 2.8 - 2)
+      );
+      seats.rotation.y = facing;
+      scene.add(seats);
+    }
+  });
+})();
 
 // ---- Physics state ----
 const _st0 = trackCurve.getTangent(0);
