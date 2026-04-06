@@ -155,7 +155,6 @@ scene.add(ground);
 buildTrack();
 buildGuardrails(TRACK_RX + TRACK_W / 2 + 0.6, TRACK_RZ + TRACK_W / 2 + 0.6, 80);
 buildGuardrails(TRACK_RX - TRACK_W / 2 - 0.6, TRACK_RZ - TRACK_W / 2 - 0.6, 60);
-addDecorations();
 
 const sfLine = new THREE.Mesh(
   new THREE.PlaneGeometry(TRACK_W, 3),
@@ -164,54 +163,6 @@ const sfLine = new THREE.Mesh(
 sfLine.rotation.x = -Math.PI / 2;
 sfLine.position.set(TRACK_RX, 0.01, 0);
 scene.add(sfLine);
-
-// ---- GLB loader helper ----
-function loadGLB(path, onLoad) {
-  const loader = new THREE.GLTFLoader();
-  loader.load(path, gltf => {
-    const model = gltf.scene;
-    onLoad(model);
-  });
-}
-
-function addDecorations() {
-  // Large trees outside the track ellipse
-  const treePositions = [
-    [80, 0], [-80, 0], [0, 58], [0, -58],
-    [68, 48], [-68, 48], [68, -48], [-68, -48],
-  ];
-  treePositions.forEach(([tx, tz]) => {
-    loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeLarge.glb', model => {
-      model.scale.set(4, 4, 4);
-      model.position.set(tx, 0, tz);
-      scene.add(model);
-    });
-  });
-
-  // Grandstands on top and bottom straights
-  [[0, 58, 0], [0, -58, Math.PI]].forEach(([gx, gz, ry]) => {
-    loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/grandStand.glb', model => {
-      model.scale.set(4, 4, 4);
-      model.position.set(gx, 0, gz);
-      model.rotation.y = ry;
-      scene.add(model);
-    });
-  });
-
-  // Red barriers along the inner edge of the track
-  for (let i = 0; i < 12; i++) {
-    const t = (i / 12) * Math.PI * 2;
-    const bx = (TRACK_RX - TRACK_W / 2 - 3) * Math.cos(t);
-    const bz = (TRACK_RZ - TRACK_W / 2 - 3) * Math.sin(t);
-    const rot = Math.atan2(bz, bx);
-    loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', model => {
-      model.scale.set(2, 2, 2);
-      model.position.set(bx, 0, bz);
-      model.rotation.y = rot + Math.PI / 2;
-      scene.add(model);
-    });
-  }
-}
 
 // ---- Car mesh ----
 const carGroup = new THREE.Group();
@@ -244,14 +195,6 @@ for (const [wx, wy, wz] of [[1.2,-0.3,1.1],[1.2,-0.3,-1.1],[-1.2,-0.3,1.1],[-1.2
   carGroup.add(w);
 }
 scene.add(carGroup);
-
-// Load GLB model for player car, hide the placeholder geometry meshes
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/raceCarRed.glb', model => {
-  model.scale.set(2, 2, 2);
-  model.rotation.y = Math.PI / 2;
-  carGroup.add(model);
-  carGroup.children.forEach(c => { if (c.isMesh) c.visible = false; });
-});
 
 // Exhaust point light (rear of car)
 const exhaustLight = new THREE.PointLight(0xff6600, 0, 6);
