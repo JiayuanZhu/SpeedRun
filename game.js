@@ -280,6 +280,40 @@ function updateAICars() {
   });
 }
 
+// ---- Phase C: Track Scenery — Trees + Grandstands ----
+// Trees: 10 evenly spaced around the outer ellipse, 17 units beyond outer edge
+const TREE_RX = TRACK_RX + TRACK_W / 2 + 17;  // 82
+const TREE_RZ = TRACK_RZ + TRACK_W / 2 + 17;  // 57
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeLarge.glb', function(treeTemplate) {
+  for (let i = 0; i < 10; i++) {
+    const t = (i / 10) * Math.PI * 2;
+    const tree = treeTemplate.clone();
+    tree.scale.setScalar(3);
+    tree.position.set(TREE_RX * Math.cos(t), 0, TREE_RZ * Math.sin(t));
+    scene.add(tree);
+  }
+});
+
+// Grandstands: 2 on north side, 2 on south side of the straight sections
+const GS_Z_OFFSET = TRACK_RZ + TRACK_W / 2 + 25;  // 65 units from center
+const gsPositions = [
+  { x:  30, z: -GS_Z_OFFSET, ry: 0          },  // north, right
+  { x: -30, z: -GS_Z_OFFSET, ry: 0          },  // north, left
+  { x:  30, z:  GS_Z_OFFSET, ry: Math.PI    },  // south, right (faces inward)
+  { x: -30, z:  GS_Z_OFFSET, ry: Math.PI    },  // south, left  (faces inward)
+];
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/grandStand.glb', function(gsTemplate) {
+  gsPositions.forEach(function(p) {
+    const gs = gsTemplate.clone();
+    gs.scale.setScalar(4);
+    gs.position.set(p.x, 0, p.z);
+    gs.rotation.y = p.ry;
+    scene.add(gs);
+  });
+});
+
 // ---- Physics state ----
 const car = {
   x: TRACK_RX,
