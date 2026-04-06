@@ -222,6 +222,64 @@ const exhaustLight = new THREE.PointLight(0xff6600, 0, 6);
 exhaustLight.position.set(-2.2, 0.2, 0);
 carGroup.add(exhaustLight);
 
+// ---- AI Cars ----
+const AI_CONFIGS = [
+  { color: 0xff6600, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarOrange.glb', startAngle: Math.PI * 0.10 },
+  { color: 0x00aa00, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarGreen.glb',  startAngle: Math.PI * 0.20 },
+  { color: 0xdddddd, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarWhite.glb',  startAngle: Math.PI * 0.30 },
+];
+
+const aiCars = AI_CONFIGS.map(function(cfg, idx) {
+  const group = new THREE.Group();
+  // Placeholder box mesh
+  const bodyMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(3.5, 0.6, 1.8),
+    new THREE.MeshLambertMaterial({ color: cfg.color })
+  );
+  group.add(bodyMesh);
+  scene.add(group);
+
+  // Load GLB
+  loadGLB(cfg.glb, function(model) {
+    model.scale.setScalar(2);
+    model.rotation.y = Math.PI;
+    group.children.forEach(function(child) {
+      if (child.isMesh) child.visible = false;
+    });
+    group.add(model);
+  });
+
+  const startX = TRACK_RX * Math.cos(cfg.startAngle);
+  const startZ = TRACK_RZ * Math.sin(cfg.startAngle);
+  return {
+    group: group,
+    x: startX,
+    z: startZ,
+    angle: cfg.startAngle + Math.PI / 2,
+    speed: 0.55 + idx * 0.03,   // slight variation per car
+    trackAngle: cfg.startAngle,  // current angle along ellipse
+  };
+});
+
+function updateAICars() {
+  aiCars.forEach(function(ai) {
+    // Advance along ellipse at constant angular speed proportional to car speed
+    // ds ≈ R·dθ, approximate R as mean of RX and RZ
+    const R = (TRACK_RX + TRACK_RZ) / 2;
+    ai.trackAngle -= ai.speed / R;   // negative = counter-clockwise (same as player start direction)
+
+    const nx = TRACK_RX * Math.cos(ai.trackAngle);
+    const nz = TRACK_RZ * Math.sin(ai.trackAngle);
+    // heading = tangent of ellipse
+    ai.angle = Math.atan2(nz - ai.z, nx - ai.x);
+    ai.x = nx;
+    ai.z = nz;
+
+    ai.group.position.set(ai.x, 0.3, ai.z);
+    ai.group.rotation.y = ai.angle - Math.PI / 2;
+  });
+}
+
 // ---- Physics state ----
 const car = {
   x: TRACK_RX,
@@ -1010,6 +1068,9 @@ function update() {
   exhaustLight.intensity = launching
     ? 2.5 + Math.random() * 1.5
     : Math.max(0, exhaustLight.intensity - 0.3);
+
+  // ---- Update AI cars ----
+  updateAICars();
 
   // ---- Update mesh ----
   const rollAngle = -latVel * car.driftFactor * 0.4;
