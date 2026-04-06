@@ -1,3 +1,10 @@
+// ---- Demo mode ----
+const DEMO_MODE = new URLSearchParams(window.location.search).has('demo');
+if (DEMO_MODE) {
+  const demoBadge = document.getElementById('demo-badge');
+  if (demoBadge) demoBadge.style.display = 'block';
+}
+
 // ---- Renderer ----
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -883,10 +890,17 @@ function updateSmoke() {
 }
 
 // ---- Game state machine ----
-let gameState      = 'intro';
+let gameState      = DEMO_MODE ? 'racing' : 'intro';
 let countdownStart = 0;
-let raceStartTime  = 0;
+let raceStartTime  = DEMO_MODE ? performance.now() : 0;
 let totalRaceTime  = 0;
+
+// ---- Demo mode state ----
+let playerDemoT = 0;
+if (DEMO_MODE) {
+  lapState.lapStart = raceStartTime;
+  lapState.lap      = 1;
+}
 
 function startCountdown() {
   if (gameState !== 'intro') return;
@@ -1273,6 +1287,37 @@ function update() {
 
   if (lapState.finished) {
     if (totalRaceTime === 0) totalRaceTime = performance.now() - raceStartTime;
+    return;
+  }
+
+  // ---- Demo mode: auto-drive along track curve ----
+  if (DEMO_MODE) {
+    playerDemoT = (playerDemoT + 0.003) % 1;
+    const dPt  = trackCurve.getPointAt(playerDemoT);
+    const dTan = trackCurve.getTangentAt(playerDemoT);
+    car.x           = dPt.x;
+    car.z           = dPt.z;
+    car.angle       = Math.atan2(-dTan.z, dTan.x);
+    car.vx          = dTan.x * 0.9;
+    car.vz          = -dTan.z * 0.9;
+    car.driftFactor = 0;
+    car.drifting    = false;
+    car.onTrack     = true;
+    updateAICars();
+    updateSmoke();
+    updateLap();
+    carGroup.position.set(car.x, 0, car.z);
+    carGroup.rotation.set(0, car.angle - Math.PI / 2, 0, 'YXZ');
+    const _cosA = Math.cos(car.angle), _sinA = Math.sin(car.angle);
+    const _spd  = Math.sqrt(car.vx * car.vx + car.vz * car.vz);
+    camPos.lerp(new THREE.Vector3(
+      car.x - _cosA * (10 + _spd * 4),
+      12 + _spd,
+      car.z + _sinA * (10 + _spd * 4)
+    ), 0.08);
+    camTarget.lerp(new THREE.Vector3(car.x + _cosA * 5, 0.5, car.z - _sinA * 5), 0.12);
+    camera.position.copy(camPos);
+    camera.lookAt(camTarget);
     return;
   }
 
