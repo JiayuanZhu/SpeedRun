@@ -326,9 +326,9 @@ carGroup.add(exhaustLight);
 
 // ---- AI Cars ----
 const AI_CONFIGS = [
-  { color: 0xff6600, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarOrange.glb', startT: 0.04 },
-  { color: 0x00aa00, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarGreen.glb',  startT: 0.08 },
-  { color: 0xdddddd, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarWhite.glb',  startT: 0.12 },
+  { color: 0xff6600, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarOrange.glb', startT: 0.02 },
+  { color: 0x00aa00, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarGreen.glb',  startT: 0.04 },
+  { color: 0xdddddd, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarWhite.glb',  startT: 0.06 },
 ];
 
 const aiCars = AI_CONFIGS.map(function(cfg, idx) {
@@ -348,11 +348,19 @@ const aiCars = AI_CONFIGS.map(function(cfg, idx) {
     group.add(model);
   });
 
-  return {
+  const aiObj = {
     group:  group,
     trackT: cfg.startT,
     speed:  0.55 + idx * 0.03,
   };
+
+  // Set initial position along track
+  const aiPt0  = trackCurve.getPoint(cfg.startT);
+  const aiTan0 = trackCurve.getTangent(cfg.startT);
+  group.position.set(aiPt0.x, 0.3, aiPt0.z);
+  group.rotation.y = Math.atan2(-aiTan0.z, aiTan0.x) - Math.PI / 2;
+
+  return aiObj;
 });
 
 function updateAICars() {
@@ -424,7 +432,7 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', function
     const t       = i / COUNT;
     const barrier = tmpl.clone();
     barrier.scale.setScalar(1.5);
-    barrier.position.copy(trkPt(t, -(TRACK_W / 2 + 2)));
+    barrier.position.copy(trkPt(t, -(TRACK_W / 2 + 1)));
     barrier.rotation.y = trkFacing(t);
     scene.add(barrier);
   }
@@ -437,7 +445,7 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/fenceStraight.glb', funct
     const t     = i / COUNT;
     const fence = tmpl.clone();
     fence.scale.setScalar(2);
-    fence.position.copy(trkPt(t, TRACK_W / 2 + 3));
+    fence.position.copy(trkPt(t, TRACK_W / 2 + 1));
     fence.rotation.y = trkFacing(t);
     scene.add(fence);
   }
@@ -670,31 +678,34 @@ function isOnTrack(x, z) {
 }
 
 function resolveTrackBoundary() {
-  // Re-evaluate at post-integration position
   const { t, dist } = findNearestT(car.x, car.z, playerNearestT);
   playerNearestT       = t;
   playerDistFromCenter = dist;
-  if (dist <= TRACK_W / 2) return false;
 
-  const pt  = trackCurve.getPoint(t);
+  const halfW = TRACK_W / 2;
+  if (dist <= halfW) return false;
+
+  const cp  = trackCurve.getPoint(t);
   const tan = trackCurve.getTangent(t);
   const nx  = -tan.z, nz = tan.x;
-  const dx  = car.x - pt.x, dz = car.z - pt.z;
+  const dx  = car.x - cp.x, dz = car.z - cp.z;
   const side = (dx * nx + dz * nz) >= 0 ? 1 : -1;
 
-  // Push back to just inside the edge
-  car.x = pt.x + nx * side * (TRACK_W / 2 - 0.1);
-  car.z = pt.z + nz * side * (TRACK_W / 2 - 0.1);
+  // Hard push to boundary
+  car.x = cp.x + nx * side * (halfW - 0.3);
+  car.z = cp.z + nz * side * (halfW - 0.3);
 
-  // Inward-pointing normal (toward track centre from this wall)
-  const nnx = -side * nx, nnz = -side * nz;
-  const dot = car.vx * nnx + car.vz * nnz;
-  if (dot < 0) {   // velocity has outward component → reflect
-    car.vx -= 2 * dot * nnx;
-    car.vz -= 2 * dot * nnz;
+  // Elastic bounce: reflect outward velocity component
+  const vnDot = car.vx * nx + car.vz * nz;
+  if ((vnDot > 0) === (side > 0)) {
+    car.vx -= 1.6 * vnDot * nx;
+    car.vz -= 1.6 * vnDot * nz;
   }
-  car.vx *= 0.35; car.vz *= 0.35;
-  shakeTimer = 18; shakeAmt = 0.45;
+  // Energy loss on impact
+  car.vx *= 0.4;
+  car.vz *= 0.4;
+
+  shakeTimer = 20; shakeAmt = 0.6;
   return true;
 }
 
@@ -752,6 +763,21 @@ function updateLap() {
 
   if (lapState.flashTimer > 0) lapState.flashTimer--;
 }
+
+// ---- Wrong-way detection ----
+let wrongWayActive = false;
+let wrongWayTimer  = 0;  // frames spent going wrong way
+const WRONG_WAY_RESET_FRAMES = 180;  // 3 seconds at 60fps
+
+function isWrongWay() {
+  const tan = trackCurve.getTangentAt(playerNearestT);
+  const speed = Math.sqrt(car.vx * car.vx + car.vz * car.vz);
+  if (speed < 0.1) return false;
+  const dot = (car.vx * tan.x + car.vz * tan.z) / speed;
+  return dot < -0.3;
+}
+
+const wrongWayEl = document.getElementById('wrongway');
 
 // ---- Tire marks ----
 const MARK_MAX = 2000;
@@ -1245,6 +1271,30 @@ function update() {
   car.onTrack = isOnTrack(car.x, car.z);
   const fric = car.onTrack ? GRIP_FRIC : GRASS_FRIC;
 
+  // ---- Wrong-way detection ----
+  if (isWrongWay()) {
+    wrongWayTimer++;
+    wrongWayActive = true;
+    if (wrongWayEl) wrongWayEl.style.display = 'block';
+    // Forced deceleration; acceleration blocked below
+    car.vx *= 0.85;
+    car.vz *= 0.85;
+    // After 3 seconds: teleport to nearest checkpoint facing forward
+    if (wrongWayTimer >= WRONG_WAY_RESET_FRAMES) {
+      wrongWayTimer = 0;
+      const cpT = CP_T_VALUES[lapState.nextCp === 0 ? CP_T_VALUES.length - 1 : lapState.nextCp - 1];
+      const resetPt  = trackCurve.getPoint(cpT);
+      const resetTan = trackCurve.getTangent(cpT);
+      car.x = resetPt.x; car.z = resetPt.z;
+      car.vx = 0; car.vz = 0;
+      car.angle = Math.atan2(-resetTan.z, resetTan.x);
+    }
+  } else {
+    wrongWayTimer = 0;
+    wrongWayActive = false;
+    if (wrongWayEl) wrongWayEl.style.display = 'none';
+  }
+
   const spd  = Math.sqrt(car.vx*car.vx + car.vz*car.vz);
   const cosA = Math.cos(car.angle);
   const sinA = Math.sin(car.angle);
@@ -1276,7 +1326,7 @@ function update() {
   car.angle += car.angularVel * (1 + car.driftFactor * 0.8);
 
   // ---- Acceleration ----
-  if (up && fwdVel < MAX_SPEED) {
+  if (up && fwdVel < MAX_SPEED && !wrongWayActive) {
     car.vx += cosA * ACCEL_FORCE;
     car.vz -= sinA * ACCEL_FORCE;
   }

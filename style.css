@@ -1,3 +1,24 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; }
 canvas { display: block; width: 100vw; height: 100vh; }
+
+#wrongway {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -120px);
+  font-family: monospace;
+  font-size: 48px;
+  font-weight: bold;
+  color: #ff1111;
+  text-shadow: 0 0 20px #ff0000, 0 0 40px #ff0000;
+  pointer-events: none;
+  z-index: 100;
+  animation: wrongway-blink 0.5s step-start infinite;
+}
+
+@keyframes wrongway-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.15; }
+}
