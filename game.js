@@ -153,8 +153,7 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.05;
 scene.add(ground);
 buildTrack();
-buildGuardrails(TRACK_RX + TRACK_W / 2 + 0.6, TRACK_RZ + TRACK_W / 2 + 0.6, 80);
-buildGuardrails(TRACK_RX - TRACK_W / 2 - 0.6, TRACK_RZ - TRACK_W / 2 - 0.6, 60);
+// Guardrails replaced by GLB barriers/fences in Phase D
 
 const sfLine = new THREE.Mesh(
   new THREE.PlaneGeometry(TRACK_W, 3),
@@ -312,6 +311,40 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/grandStand.glb', function
     gs.rotation.y = p.ry;
     scene.add(gs);
   });
+});
+
+// ---- Phase D: Barriers (inner) + Fences (outer) ----
+// Inner barriers: 2.5 units inside the inner edge
+const BARRIER_RX = TRACK_RX - TRACK_W / 2 - 2.5;  // 52.5
+const BARRIER_RZ = TRACK_RZ - TRACK_W / 2 - 2.5;  // 27.5
+// Outer fences: 1 unit beyond the outer edge
+const FENCE_RX = TRACK_RX + TRACK_W / 2 + 1;      // 66
+const FENCE_RZ = TRACK_RZ + TRACK_W / 2 + 1;      // 41
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', function(barrierTemplate) {
+  const COUNT = 16;
+  for (let i = 0; i < COUNT; i++) {
+    const t = (i / COUNT) * Math.PI * 2;
+    const barrier = barrierTemplate.clone();
+    barrier.scale.setScalar(1.5);
+    barrier.position.set(BARRIER_RX * Math.cos(t), 0, BARRIER_RZ * Math.sin(t));
+    // Align to ellipse tangent: tangent direction = (-rx*sin(t), rz*cos(t))
+    barrier.rotation.y = Math.atan2(-BARRIER_RX * Math.sin(t), BARRIER_RZ * Math.cos(t));
+    scene.add(barrier);
+  }
+});
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/fenceStraight.glb', function(fenceTemplate) {
+  const COUNT = 20;
+  for (let i = 0; i < COUNT; i++) {
+    const t = (i / COUNT) * Math.PI * 2;
+    const fence = fenceTemplate.clone();
+    fence.scale.setScalar(2);
+    fence.position.set(FENCE_RX * Math.cos(t), 0, FENCE_RZ * Math.sin(t));
+    // Align to ellipse tangent
+    fence.rotation.y = Math.atan2(-FENCE_RX * Math.sin(t), FENCE_RZ * Math.cos(t));
+    scene.add(fence);
+  }
 });
 
 // ---- Physics state ----
