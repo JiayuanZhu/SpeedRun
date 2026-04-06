@@ -1,0 +1,16 @@
+# 录像文件（大文件不入库）
+*.gif
+*.mp4
+*.jpg
+*.png
+!assets/**/*.png
+
+# 临时录像脚本
+record_pF_final.py
+record_pG.py
+record_pH.py
+record_pI.py
+record_phaseF.py
+
+# Node
+node_modules/

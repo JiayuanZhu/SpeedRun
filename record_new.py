@@ -59,7 +59,7 @@ chrome = popen([
     "--no-first-run", "--disable-extensions", "--disable-popup-blocking",
     "--autoplay-policy=no-user-gesture-required",
     f"--remote-debugging-port={CDP_PORT}", "--remote-allow-origins=*",
-    "file:///home/horde/SpeedRun/index.html",
+    "http://localhost:8766/",
 ], env={**os.environ, "DISPLAY": DISPLAY})
 print(f"  Chrome pid={chrome.pid}", flush=True)
 
@@ -130,7 +130,7 @@ print("Navigating...", flush=True)
 # Enable console message capture before navigation
 cdp("Runtime.enable")
 cdp("Log.enable")
-cdp("Page.navigate", {"url": "file:///home/horde/SpeedRun/index.html"})
+cdp("Page.navigate", {"url": "http://localhost:8766/"})
 
 # Poll until gameState is defined (up to 15s)
 for attempt in range(15):

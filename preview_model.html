@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>body{margin:0;background:#1a1a2e;}</style>
+</head>
+<body>
+<canvas id="c" width="800" height="600"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+renderer.setSize(800, 600);
+renderer.shadowMap.enabled = true;
+renderer.outputEncoding = THREE.sRGBEncoding;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+// 灯光
+const amb = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(amb);
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(5, 8, 5);
+scene.add(dir);
+const dir2 = new THREE.DirectionalLight(0x4466ff, 0.4);
+dir2.position.set(-5, 3, -5);
+scene.add(dir2);
+
+const camera = new THREE.PerspectiveCamera(45, 800/600, 0.01, 100);
+camera.position.set(3, 2, 3);
+camera.lookAt(0, 0, 0);
+
+// 地面
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(10, 10),
+  new THREE.MeshStandardMaterial({color: 0x222244, roughness: 0.8})
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -0.3;
+scene.add(ground);
+
+window._loaded = false;
+const loader = new THREE.GLTFLoader();
+loader.load('/assets/kenney_racing-kit/Models/GLTF%20format/raceCarRed.glb',
+  (gltf) => {
+    const model = gltf.scene;
+    // 居中
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.sub(center);
+    model.position.y = 0;
+    model.scale.setScalar(2);
+    scene.add(model);
+    window._loaded = true;
+    console.log('GLB loaded!');
+  },
+  undefined,
+  (err) => { console.error('load error', err); window._loadError = true; }
+);
+
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
