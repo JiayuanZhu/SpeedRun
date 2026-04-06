@@ -1,9 +1,11 @@
-# 录像文件（大文件不入库）
-*.gif
+# 录像和截图（放到 recordings/ 临时目录，不入库）
+recordings/
 *.mp4
+*.gif
 *.jpg
-*.png
+*.jpeg
 !assets/**/*.png
+!assets/**/*.jpg
 
 # 临时录像脚本
 record_pF_final.py
@@ -11,6 +13,10 @@ record_pG.py
 record_pH.py
 record_pI.py
 record_phaseF.py
+record_pF*.py
+record_pH*.py
+record_pG*.py
+record_pI*.py
 
 # Node
 node_modules/
