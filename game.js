@@ -38,7 +38,7 @@ scene.add(moonLight);
 })();
 
 // ---- Track definition (CatmullRom, clockwise) ----
-const TRACK_W       = 14;
+const TRACK_W       = 18;
 const TRACK_SAMPLES = 200;
 
 // Control points — Silverstone F1 circuit (TUM dataset, scaled ×2.5).
@@ -114,7 +114,7 @@ function buildTrack() {
   geo.setIndex(indices);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo,
-    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x2a2a2a, emissive: 0x111111 }));
+    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x1e1e1e, emissive: 0x1e1e1e }));
   mesh.receiveShadow = true;
   scene.add(mesh);
 
@@ -625,6 +625,10 @@ const car = {
   onTrack:    true,
 };
 
+// Place car mesh at track start immediately (not just when racing begins)
+carGroup.position.set(car.x, 0.3, car.z);
+carGroup.rotation.set(0, car.angle - Math.PI / 2, 0, 'YXZ');
+
 // Tuning
 const MASS          = 1.0;
 const ACCEL_FORCE   = 0.06;
@@ -873,8 +877,8 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // ---- Camera ----
-let camPos    = new THREE.Vector3(46, 6, 0);
-let camTarget = new THREE.Vector3(60, 0.5, 4);
+let camPos    = new THREE.Vector3(_sp0.x + 14, 8, _sp0.z);
+let camTarget = new THREE.Vector3(_sp0.x, 0.5, _sp0.z);
 camera.position.copy(camPos);
 camera.lookAt(camTarget);
 
@@ -1218,10 +1222,10 @@ function update() {
 
   if (gameState !== 'racing') {
     const t      = performance.now() / 4000;
-    const orbitX = 60 + Math.cos(t) * 20;
-    const orbitZ = Math.sin(t) * 14;
+    const orbitX = _sp0.x + Math.cos(t) * 20;
+    const orbitZ = _sp0.z + Math.sin(t) * 14;
     camPos.lerp(new THREE.Vector3(orbitX, 8, orbitZ), 0.02);
-    camTarget.lerp(new THREE.Vector3(60, 0, 0), 0.05);
+    camTarget.lerp(new THREE.Vector3(_sp0.x, 0, _sp0.z), 0.05);
     camera.position.copy(camPos);
     camera.lookAt(camTarget);
     return;
