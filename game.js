@@ -384,6 +384,68 @@ loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', fun
   });
 });
 
+// ---- Phase F: Environment Details ----
+
+// 1. Overhead gantry over the start/finish line (x = TRACK_RX, z = 0)
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overhead.glb', function(model) {
+  model.scale.setScalar(4);
+  model.position.set(TRACK_RX, 5, 0);
+  model.rotation.y = Math.PI / 2;
+  scene.add(model);
+});
+
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overheadLights.glb', function(model) {
+  model.scale.setScalar(4);
+  model.position.set(TRACK_RX, 5, 0);
+  model.rotation.y = Math.PI / 2;
+  scene.add(model);
+});
+
+// 2. Billboards: 3 around the outer ellipse at 0°, 90°, 180°
+const BILLBOARD_RX = FENCE_RX + 5;
+const BILLBOARD_RZ = FENCE_RZ + 5;
+const billboardAngles = [0, Math.PI / 2, Math.PI];
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/billboard.glb', function(bbTemplate) {
+  billboardAngles.forEach(function(t) {
+    const bb = bbTemplate.clone();
+    bb.scale.setScalar(3);
+    bb.position.set(BILLBOARD_RX * Math.cos(t), 0, BILLBOARD_RZ * Math.sin(t));
+    bb.rotation.y = Math.atan2(-BILLBOARD_RX * Math.sin(t), BILLBOARD_RZ * Math.cos(t));
+    scene.add(bb);
+  });
+});
+
+// 3. Banner towers near grandstands (x = ±45, z = ±(GS_Z_OFFSET - 5))
+const bannerTowerPositions = [
+  { x:  45, z: -(GS_Z_OFFSET - 5), ry: 0 },
+  { x: -45, z: -(GS_Z_OFFSET - 5), ry: 0 },
+  { x:  45, z:  (GS_Z_OFFSET - 5), ry: Math.PI },
+  { x: -45, z:  (GS_Z_OFFSET - 5), ry: Math.PI },
+];
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/bannerTowerGreen.glb', function(towerTemplate) {
+  bannerTowerPositions.forEach(function(p) {
+    const tower = towerTemplate.clone();
+    tower.scale.setScalar(3);
+    tower.position.set(p.x, 0, p.z);
+    tower.rotation.y = p.ry;
+    scene.add(tower);
+  });
+});
+
+// 4. Small trees: 10 trees interleaved between large trees (same ellipse, offset 2 units inward)
+const SMALL_TREE_RX = TREE_RX - 2;
+const SMALL_TREE_RZ = TREE_RZ - 2;
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeSmall.glb', function(smallTreeTemplate) {
+  for (let i = 0; i < 10; i++) {
+    // Offset by half a step to interleave with large trees
+    const t = ((i + 0.5) / 10) * Math.PI * 2;
+    const st = smallTreeTemplate.clone();
+    st.scale.setScalar(2.5);
+    st.position.set(SMALL_TREE_RX * Math.cos(t), 0, SMALL_TREE_RZ * Math.sin(t));
+    scene.add(st);
+  }
+});
+
 // ---- Physics state ----
 const car = {
   x: TRACK_RX,
