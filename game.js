@@ -2,75 +2,68 @@
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.setClearColor(0x000510);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x060612, 120, 380);
-
-// ---- Sky: canvas gradient + stars ----
-(function buildSky() {
-  const size = 512;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, size);
-  grad.addColorStop(0, '#000005');
-  grad.addColorStop(0.5, '#06061a');
-  grad.addColorStop(1, '#0d1a2e');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  // Stars
-  const rng = (s => () => { s = Math.sin(s) * 43758.5453; return s - Math.floor(s); })(42);
-  for (let i = 0; i < 320; i++) {
-    const sx = rng() * size, sy = rng() * size * 0.7;
-    const r  = rng() * 1.2 + 0.2;
-    const a  = 0.4 + rng() * 0.6;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255,255,255,${a})`;
-    ctx.fill();
-  }
-  const tex = new THREE.CanvasTexture(c);
-  scene.background = tex;
-})();
+scene.fog = new THREE.Fog(0x000510, 150, 450);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
 
-// ---- Lighting ----
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-sun.position.set(50, 100, 50);
-sun.castShadow = true;
-scene.add(sun);
+// ---- Lighting (night / moonlight) ----
+const ambientLight = new THREE.AmbientLight(0x223355, 0.4);
+scene.add(ambientLight);
+const moonLight = new THREE.DirectionalLight(0x4466aa, 0.8);
+moonLight.position.set(-100, 200, -50);
+moonLight.castShadow = true;
+scene.add(moonLight);
 
-// ---- Track ----
-const TRACK_RX = 60;
-const TRACK_RZ = 35;
-const TRACK_W  = 10;
-const SEG = 128;
+// ---- Starfield ----
+(function buildStarfield() {
+  const pos = [];
+  for (let i = 0; i < 3000; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi   = Math.acos(2 * Math.random() - 1);
+    const r     = 800 + Math.random() * 400;
+    pos.push(
+      r * Math.sin(phi) * Math.cos(theta),
+      r * Math.sin(phi) * Math.sin(theta),
+      r * Math.cos(phi)
+    );
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo,
+    new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, sizeAttenuation: true })));
+})();
 
+// ---- Track definition (CatmullRom, clockwise) ----
+const TRACK_W       = 14;
+const TRACK_SAMPLES = 200;
+
+// Control points — clockwise when viewed from above.
+// t=0 is the start/finish line at (60, 0, 0); curve first heads south-west.
+const trackPoints = [
+  new THREE.Vector3( 60,  0,   0),   // start/finish
+  new THREE.Vector3( 40,  0, -45),   // right lower bend
+  new THREE.Vector3(  0,  0, -65),   // bottom curve (fast)
+  new THREE.Vector3(-40,  0, -45),   // left lower bend
+  new THREE.Vector3(-60,  0,   0),   // leftmost point
+  new THREE.Vector3(-30,  0,  55),   // left upper bend
+  new THREE.Vector3( 20,  0,  70),   // hairpin apex (slow)
+  new THREE.Vector3( 70,  0,  55),   // north-east straight
+  new THREE.Vector3( 80,  0,  25),   // right bend exit
+];
+const trackCurve  = new THREE.CatmullRomCurve3(trackPoints, true, 'catmullrom', 0.5);
+const CURVE_LENGTH = trackCurve.getLength();
+
+// ---- Track surface ----
 function buildTrack() {
-  const shape = new THREE.Shape();
-  for (let i = 0; i <= SEG; i++) {
-    const t = (i / SEG) * Math.PI * 2;
-    const x = (TRACK_RX + TRACK_W / 2) * Math.cos(t);
-    const y = (TRACK_RZ + TRACK_W / 2) * Math.sin(t);
-    i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y);
-  }
-  const hole = new THREE.Path();
-  for (let i = 0; i <= SEG; i++) {
-    const t = (i / SEG) * Math.PI * 2;
-    const x = (TRACK_RX - TRACK_W / 2) * Math.cos(t);
-    const y = (TRACK_RZ - TRACK_W / 2) * Math.sin(t);
-    i === 0 ? hole.moveTo(x, y) : hole.lineTo(x, y);
-  }
-  shape.holes.push(hole);
-  // Road canvas texture: dark asphalt + subtle grid lines
   const texSize = 256;
   const tc = document.createElement('canvas');
   tc.width = tc.height = texSize;
   const tctx = tc.getContext('2d');
-  tctx.fillStyle = '#3a3a3a';
+  tctx.fillStyle = '#333333';
   tctx.fillRect(0, 0, texSize, texSize);
   tctx.strokeStyle = 'rgba(255,255,255,0.06)';
   tctx.lineWidth = 1;
@@ -78,7 +71,6 @@ function buildTrack() {
     tctx.beginPath(); tctx.moveTo(g, 0); tctx.lineTo(g, texSize); tctx.stroke();
     tctx.beginPath(); tctx.moveTo(0, g); tctx.lineTo(texSize, g); tctx.stroke();
   }
-  // Subtle noise-like speckle
   for (let p = 0; p < 2000; p++) {
     const px = Math.random() * texSize, py = Math.random() * texSize;
     const br = Math.random() * 30 + 20;
@@ -87,81 +79,124 @@ function buildTrack() {
   }
   const roadTex = new THREE.CanvasTexture(tc);
   roadTex.wrapS = roadTex.wrapT = THREE.RepeatWrapping;
-  roadTex.repeat.set(8, 8);
+  roadTex.repeat.set(2, 20);
 
-  const mesh = new THREE.Mesh(
-    new THREE.ShapeGeometry(shape, SEG),
-    new THREE.MeshLambertMaterial({ map: roadTex })
-  );
-  mesh.rotation.x = -Math.PI / 2;
+  const positions = [], uvs = [], indices = [];
+  for (let i = 0; i <= TRACK_SAMPLES; i++) {
+    const t   = i / TRACK_SAMPLES;
+    const pt  = trackCurve.getPoint(t);
+    const tan = trackCurve.getTangent(t);
+    const nx  = -tan.z, nz = tan.x;  // left-hand normal in XZ
+    const hw  = TRACK_W / 2;
+    positions.push(
+      pt.x + nx * hw, 0, pt.z + nz * hw,
+      pt.x - nx * hw, 0, pt.z - nz * hw
+    );
+    uvs.push(0, t * 20, 1, t * 20);
+  }
+  for (let i = 0; i < TRACK_SAMPLES; i++) {
+    const a = i*2, b = i*2+1, c = (i+1)*2, d = (i+1)*2+1;
+    indices.push(a, b, c,  b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv',       new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo,
+    new THREE.MeshLambertMaterial({ map: roadTex, color: 0x333333, emissive: 0x111111 }));
   mesh.receiveShadow = true;
   scene.add(mesh);
-  buildKerb(TRACK_RX + TRACK_W / 2, TRACK_RZ + TRACK_W / 2);
-  buildKerb(TRACK_RX - TRACK_W / 2, TRACK_RZ - TRACK_W / 2);
+
+  buildRumbleStrips();
+  buildCenterLine();
 }
 
-function buildKerb(rx, rz) {
-  for (let i = 0; i < 48; i++) {
-    const t1 = (i / 48) * Math.PI * 2;
-    const t2 = ((i + 0.5) / 48) * Math.PI * 2;
-    const tm = (t1 + t2) / 2;
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.abs(rx * Math.cos(t2) - rx * Math.cos(t1)) + 1, 0.05,
-                            Math.abs(rz * Math.sin(t2) - rz * Math.sin(t1)) + 1),
-      new THREE.MeshLambertMaterial({ color: i % 2 === 0 ? 0xff2222 : 0xffffff })
-    );
-    mesh.position.set(rx * Math.cos(tm), 0.025, rz * Math.sin(tm));
-    scene.add(mesh);
+// ---- Rumble strips (red/white alternating on both edges) ----
+function buildRumbleStrips() {
+  const positions = [], colors = [];
+  const hw = TRACK_W / 2, sw = 2;  // strip width = 2 units
+  for (let i = 0; i < TRACK_SAMPLES; i++) {
+    const t0 = i / TRACK_SAMPLES;
+    const t1 = (i + 1) / TRACK_SAMPLES;
+    const p0   = trackCurve.getPoint(t0);
+    const p1   = trackCurve.getPoint(t1);
+    const tan0 = trackCurve.getTangent(t0);
+    const nx0  = -tan0.z, nz0 = tan0.x;
+    const tan1 = trackCurve.getTangent(t1);
+    const nx1  = -tan1.z, nz1 = tan1.x;
+
+    const isRed = i % 2 === 0;
+    const cr = 1.0, cg = isRed ? 0.0 : 1.0, cb = isRed ? 0.0 : 1.0;
+
+    // Both left (+nx) and right (-nx) sides
+    for (const s of [1, -1]) {
+      const ix0 = p0.x + s*nx0*hw,       iz0 = p0.z + s*nz0*hw;
+      const ix1 = p1.x + s*nx1*hw,       iz1 = p1.z + s*nz1*hw;
+      const ox0 = p0.x + s*nx0*(hw+sw),  oz0 = p0.z + s*nz0*(hw+sw);
+      const ox1 = p1.x + s*nx1*(hw+sw),  oz1 = p1.z + s*nz1*(hw+sw);
+      positions.push(
+        ix0,0.02,iz0, ix1,0.02,iz1, ox0,0.02,oz0,
+        ix1,0.02,iz1, ox1,0.02,oz1, ox0,0.02,oz0
+      );
+      for (let v = 0; v < 6; v++) colors.push(cr, cg, cb);
+    }
   }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(colors, 3));
+  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true })));
 }
 
-function buildGuardrails(rx, rz, postCount) {
-  const postGeo = new THREE.BoxGeometry(0.3, 1.2, 0.3);
-  const railGeo = new THREE.BoxGeometry(0.12, 0.25, 0.12); // will be scaled per-segment
-  for (let i = 0; i < postCount; i++) {
-    const t  = (i / postCount) * Math.PI * 2;
-    const px = rx * Math.cos(t);
-    const pz = rz * Math.sin(t);
-    const color = i % 2 === 0 ? 0xdd1111 : 0xffffff;
-    const post = new THREE.Mesh(postGeo,
-      new THREE.MeshLambertMaterial({ color }));
-    post.position.set(px, 0.6, pz);
-    post.castShadow = true;
-    scene.add(post);
-
-    // Horizontal rail connecting to next post
-    const t2  = ((i + 1) / postCount) * Math.PI * 2;
-    const nx2 = rx * Math.cos(t2), nz2 = rz * Math.sin(t2);
-    const mx  = (px + nx2) / 2, mz = (pz + nz2) / 2;
-    const len = Math.sqrt((nx2-px)**2 + (nz2-pz)**2);
-    const ang = Math.atan2(nz2 - pz, nx2 - px);
-    const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(len, 0.12, 0.12),
-      new THREE.MeshLambertMaterial({ color: 0xcccccc })
+// ---- Dashed centre line ----
+function buildCenterLine() {
+  const positions = [];
+  const hw = 0.3;  // half-width of dashes
+  for (let i = 0; i < TRACK_SAMPLES; i++) {
+    if (i % 5 !== 0) continue;
+    const t0  = i / TRACK_SAMPLES;
+    const t1  = Math.min((i + 3) / TRACK_SAMPLES, 1);
+    const p0  = trackCurve.getPoint(t0);
+    const p1  = trackCurve.getPoint(t1);
+    const tan = trackCurve.getTangent(t0);
+    const nx  = -tan.z * hw, nz = tan.x * hw;
+    positions.push(
+      p0.x+nx, 0.03, p0.z+nz,
+      p0.x-nx, 0.03, p0.z-nz,
+      p1.x+nx, 0.03, p1.z+nz,
+      p0.x-nx, 0.03, p0.z-nz,
+      p1.x-nx, 0.03, p1.z-nz,
+      p1.x+nx, 0.03, p1.z+nz
     );
-    rail.position.set(mx, 0.9, mz);
-    rail.rotation.y = -ang;
-    scene.add(rail);
   }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff })));
 }
 
+// ---- Ground (night dark green) ----
 const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(400, 400),
-  new THREE.MeshLambertMaterial({ color: 0x2d6a2d })
+  new THREE.PlaneGeometry(600, 600),
+  new THREE.MeshLambertMaterial({ color: 0x0a1a0a })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.05;
 scene.add(ground);
 buildTrack();
-// Guardrails replaced by GLB barriers/fences in Phase D
 
-const sfLine = new THREE.Mesh(
-  new THREE.PlaneGeometry(TRACK_W, 3),
-  new THREE.MeshLambertMaterial({ color: 0xffffff })
-);
-sfLine.rotation.x = -Math.PI / 2;
-sfLine.position.set(TRACK_RX, 0.01, 0);
-scene.add(sfLine);
+// ---- Start/finish line ----
+(function() {
+  const tan0    = trackCurve.getTangent(0);
+  const sfAngle = Math.atan2(tan0.z, tan0.x);
+  const sfLine  = new THREE.Mesh(
+    new THREE.PlaneGeometry(TRACK_W, 3),
+    new THREE.MeshLambertMaterial({ color: 0xffffff })
+  );
+  sfLine.rotation.x = -Math.PI / 2;
+  sfLine.rotation.y = -sfAngle - Math.PI / 2;
+  sfLine.position.set(60, 0.01, 0);
+  scene.add(sfLine);
+})();
 
 // ---- Car mesh ----
 const carGroup = new THREE.Group();
@@ -205,40 +240,36 @@ function loadGLB(path, callback) {
   });
 }
 
-// Async load player car GLB; hide placeholder meshes once loaded
+// Player car GLB
 loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/raceCarRed.glb', function(model) {
   model.scale.setScalar(2);
   model.rotation.y = Math.PI;
-  // Hide original box meshes (keep exhaustLight which is a PointLight)
   carGroup.children.forEach(function(child) {
     if (child.isMesh) child.visible = false;
   });
   carGroup.add(model);
 });
 
-// Exhaust point light (rear of car)
+// Exhaust point light
 const exhaustLight = new THREE.PointLight(0xff6600, 0, 6);
 exhaustLight.position.set(-2.2, 0.2, 0);
 carGroup.add(exhaustLight);
 
 // ---- AI Cars ----
 const AI_CONFIGS = [
-  { color: 0xff6600, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarOrange.glb', startAngle: Math.PI * 0.10 },
-  { color: 0x00aa00, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarGreen.glb',  startAngle: Math.PI * 0.20 },
-  { color: 0xdddddd, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarWhite.glb',  startAngle: Math.PI * 0.30 },
+  { color: 0xff6600, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarOrange.glb', startT: 0.04 },
+  { color: 0x00aa00, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarGreen.glb',  startT: 0.08 },
+  { color: 0xdddddd, glb: 'assets/kenney_racing-kit/Models/GLTF%20format/raceCarWhite.glb',  startT: 0.12 },
 ];
 
 const aiCars = AI_CONFIGS.map(function(cfg, idx) {
   const group = new THREE.Group();
-  // Placeholder box mesh
-  const bodyMesh = new THREE.Mesh(
+  group.add(new THREE.Mesh(
     new THREE.BoxGeometry(3.5, 0.6, 1.8),
     new THREE.MeshLambertMaterial({ color: cfg.color })
-  );
-  group.add(bodyMesh);
+  ));
   scene.add(group);
 
-  // Load GLB
   loadGLB(cfg.glb, function(model) {
     model.scale.setScalar(2);
     model.rotation.y = Math.PI;
@@ -248,215 +279,202 @@ const aiCars = AI_CONFIGS.map(function(cfg, idx) {
     group.add(model);
   });
 
-  const startX = TRACK_RX * Math.cos(cfg.startAngle);
-  const startZ = TRACK_RZ * Math.sin(cfg.startAngle);
   return {
-    group: group,
-    x: startX,
-    z: startZ,
-    angle: cfg.startAngle + Math.PI / 2,
-    speed: 0.55 + idx * 0.03,   // slight variation per car
-    trackAngle: cfg.startAngle,  // current angle along ellipse
+    group:  group,
+    trackT: cfg.startT,
+    speed:  0.55 + idx * 0.03,
   };
 });
 
 function updateAICars() {
   aiCars.forEach(function(ai) {
-    // Advance along ellipse at constant angular speed proportional to car speed
-    // ds ≈ R·dθ, approximate R as mean of RX and RZ
-    const R = (TRACK_RX + TRACK_RZ) / 2;
-    ai.trackAngle -= ai.speed / R;   // negative = counter-clockwise (same as player start direction)
-
-    const nx = TRACK_RX * Math.cos(ai.trackAngle);
-    const nz = TRACK_RZ * Math.sin(ai.trackAngle);
-    // heading = tangent of ellipse
-    ai.angle = Math.atan2(nz - ai.z, nx - ai.x);
-    ai.x = nx;
-    ai.z = nz;
-
-    ai.group.position.set(ai.x, 0.3, ai.z);
-    ai.group.rotation.y = ai.angle - Math.PI / 2;
+    ai.trackT = (ai.trackT + ai.speed / CURVE_LENGTH) % 1;
+    const pt    = trackCurve.getPoint(ai.trackT);
+    const tan   = trackCurve.getTangent(ai.trackT);
+    const angle = Math.atan2(-tan.z, tan.x);
+    ai.group.position.set(pt.x, 0.3, pt.z);
+    ai.group.rotation.y = angle - Math.PI / 2;
   });
 }
 
-// ---- Phase C: Track Scenery — Trees + Grandstands ----
-// Trees: 10 evenly spaced around the outer ellipse, 17 units beyond outer edge
-const TREE_RX = TRACK_RX + TRACK_W / 2 + 17;  // 82
-const TREE_RZ = TRACK_RZ + TRACK_W / 2 + 17;  // 57
+// ---- Scenery helpers ----
+// trkPt: world position at parameter t, offset units perpendicular to track.
+// Positive offset = left normal side; negative = right normal side.
+function trkPt(t, offset) {
+  const pt  = trackCurve.getPoint(t);
+  const tan = trackCurve.getTangent(t);
+  return new THREE.Vector3(pt.x + (-tan.z) * offset, 0, pt.z + tan.x * offset);
+}
+// trkFacing: Y rotation so asset faces along track (+ extra offset angle)
+function trkFacing(t, extra) {
+  const tan = trackCurve.getTangent(t);
+  return Math.atan2(tan.z, tan.x) + (extra || 0);
+}
 
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeLarge.glb', function(treeTemplate) {
-  for (let i = 0; i < 10; i++) {
-    const t = (i / 10) * Math.PI * 2;
-    const tree = treeTemplate.clone();
+// ---- Trees ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeLarge.glb', function(tmpl) {
+  [0.05, 0.17, 0.30, 0.43, 0.56, 0.68, 0.80, 0.93].forEach(function(t) {
+    const tree = tmpl.clone();
     tree.scale.setScalar(3);
-    tree.position.set(TREE_RX * Math.cos(t), 0, TREE_RZ * Math.sin(t));
+    const p = trkPt(t, TRACK_W / 2 + 18);
+    tree.position.copy(p);
     scene.add(tree);
-  }
+  });
 });
 
-// Grandstands: 2 on north side, 2 on south side of the straight sections
-const GS_Z_OFFSET = TRACK_RZ + TRACK_W / 2 + 25;  // 65 units from center
-const gsPositions = [
-  { x:  30, z: -GS_Z_OFFSET, ry: 0          },  // north, right
-  { x: -30, z: -GS_Z_OFFSET, ry: 0          },  // north, left
-  { x:  30, z:  GS_Z_OFFSET, ry: Math.PI    },  // south, right (faces inward)
-  { x: -30, z:  GS_Z_OFFSET, ry: Math.PI    },  // south, left  (faces inward)
-];
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeSmall.glb', function(tmpl) {
+  [0.10, 0.23, 0.36, 0.49, 0.62, 0.75, 0.87, 0.99].forEach(function(t) {
+    const st = tmpl.clone();
+    st.scale.setScalar(2.5);
+    const p = trkPt(t, TRACK_W / 2 + 16);
+    st.position.copy(p);
+    scene.add(st);
+  });
+});
 
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/grandStand.glb', function(gsTemplate) {
-  gsPositions.forEach(function(p) {
-    const gs = gsTemplate.clone();
+// ---- Grandstands (covered) ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/grandStandCovered.glb', function(tmpl) {
+  [
+    { t: 0.18, off:  26, rot: Math.PI },
+    { t: 0.38, off:  26, rot: Math.PI },
+    { t: 0.72, off: -26, rot: 0 },
+    { t: 0.88, off: -26, rot: 0 },
+  ].forEach(function(d) {
+    const gs = tmpl.clone();
     gs.scale.setScalar(4);
-    gs.position.set(p.x, 0, p.z);
-    gs.rotation.y = p.ry;
+    gs.position.copy(trkPt(d.t, d.off));
+    gs.rotation.y = trkFacing(d.t, d.rot);
     scene.add(gs);
   });
 });
 
-// ---- Phase D: Barriers (inner) + Fences (outer) ----
-// Inner barriers: 2.5 units inside the inner edge
-const BARRIER_RX = TRACK_RX - TRACK_W / 2 - 2.5;  // 52.5
-const BARRIER_RZ = TRACK_RZ - TRACK_W / 2 - 2.5;  // 27.5
-// Outer fences: 1 unit beyond the outer edge
-const FENCE_RX = TRACK_RX + TRACK_W / 2 + 1;      // 66
-const FENCE_RZ = TRACK_RZ + TRACK_W / 2 + 1;      // 41
-
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', function(barrierTemplate) {
-  const COUNT = 16;
+// ---- Inner barriers ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierRed.glb', function(tmpl) {
+  const COUNT = 20;
   for (let i = 0; i < COUNT; i++) {
-    const t = (i / COUNT) * Math.PI * 2;
-    const barrier = barrierTemplate.clone();
+    const t       = i / COUNT;
+    const barrier = tmpl.clone();
     barrier.scale.setScalar(1.5);
-    barrier.position.set(BARRIER_RX * Math.cos(t), 0, BARRIER_RZ * Math.sin(t));
-    // Align to ellipse tangent: tangent direction = (-rx*sin(t), rz*cos(t))
-    barrier.rotation.y = Math.atan2(-BARRIER_RX * Math.sin(t), BARRIER_RZ * Math.cos(t));
+    barrier.position.copy(trkPt(t, -(TRACK_W / 2 + 2)));
+    barrier.rotation.y = trkFacing(t);
     scene.add(barrier);
   }
 });
 
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/fenceStraight.glb', function(fenceTemplate) {
-  const COUNT = 20;
+// ---- Outer fences ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/fenceStraight.glb', function(tmpl) {
+  const COUNT = 24;
   for (let i = 0; i < COUNT; i++) {
-    const t = (i / COUNT) * Math.PI * 2;
-    const fence = fenceTemplate.clone();
+    const t     = i / COUNT;
+    const fence = tmpl.clone();
     fence.scale.setScalar(2);
-    fence.position.set(FENCE_RX * Math.cos(t), 0, FENCE_RZ * Math.sin(t));
-    // Align to ellipse tangent
-    fence.rotation.y = Math.atan2(-FENCE_RX * Math.sin(t), FENCE_RZ * Math.cos(t));
+    fence.position.copy(trkPt(t, TRACK_W / 2 + 3));
+    fence.rotation.y = trkFacing(t);
     scene.add(fence);
   }
 });
 
-// ---- Phase E: Flags + Light Posts ----
-// Checkered flags on both sides of the start/finish line (z = ±8 at x = TRACK_RX)
-const flagPositions = [
-  { x: TRACK_RX, z:  8, ry: 0 },   // outer side of track
-  { x: TRACK_RX, z: -8, ry: Math.PI },  // inner side of track
-];
-
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/flagCheckers.glb', function(flagTemplate) {
-  flagPositions.forEach(function(p) {
-    const flag = flagTemplate.clone();
+// ---- Checkered flags at start/finish ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/flagCheckers.glb', function(tmpl) {
+  const tan0 = trackCurve.getTangent(0);
+  const fa   = Math.atan2(tan0.z, tan0.x);
+  [{ off: TRACK_W / 2 + 1, rot: 0 }, { off: -(TRACK_W / 2 + 1), rot: Math.PI }].forEach(function(d) {
+    const flag = tmpl.clone();
     flag.scale.setScalar(3);
-    flag.position.set(p.x, 0, p.z);
-    flag.rotation.y = p.ry;
+    flag.position.copy(trkPt(0, d.off));
+    flag.rotation.y = fa + d.rot;
     scene.add(flag);
   });
 });
 
-// Light posts: 4 along the right straight — 2 inner, 2 outer, at z = ±15
-const LIGHT_INNER_X = TRACK_RX - TRACK_W / 2 - 3;  // ~52
-const LIGHT_OUTER_X = TRACK_RX + TRACK_W / 2 + 3;  // ~68
-const lightPostPositions = [
-  { x: LIGHT_INNER_X, z:  15, ry: 0 },
-  { x: LIGHT_INNER_X, z: -15, ry: 0 },
-  { x: LIGHT_OUTER_X, z:  15, ry: Math.PI },
-  { x: LIGHT_OUTER_X, z: -15, ry: Math.PI },
-];
-
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', function(lightTemplate) {
-  lightPostPositions.forEach(function(p) {
-    const lp = lightTemplate.clone();
+// ---- Light posts near start/finish ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/lightPostModern.glb', function(tmpl) {
+  [
+    { t: 0.00, off:  TRACK_W / 2 + 4 },
+    { t: 0.00, off: -(TRACK_W / 2 + 4) },
+    { t: 0.06, off:  TRACK_W / 2 + 4 },
+    { t: 0.06, off: -(TRACK_W / 2 + 4) },
+  ].forEach(function(d) {
+    const lp = tmpl.clone();
     lp.scale.setScalar(3);
-    lp.position.set(p.x, 0, p.z);
-    lp.rotation.y = p.ry;
+    lp.position.copy(trkPt(d.t, d.off));
+    lp.rotation.y = trkFacing(d.t, d.off > 0 ? Math.PI : 0);
     scene.add(lp);
   });
 });
 
-// ---- Phase F: Environment Details ----
+// ---- Overhead gantry over start/finish ----
+(function() {
+  const tan0 = trackCurve.getTangent(0);
+  const gry  = -Math.atan2(tan0.z, tan0.x);  // span perpendicular to track
+  loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overhead.glb', function(model) {
+    model.scale.setScalar(4);
+    model.position.set(60, 5, 0);
+    model.rotation.y = gry;
+    scene.add(model);
+  });
+  loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overheadLights.glb', function(model) {
+    model.scale.setScalar(4);
+    model.position.set(60, 5.1, 0);
+    model.rotation.y = gry;
+    scene.add(model);
+  });
+})();
 
-// 1. Overhead gantry over the start/finish line (x = TRACK_RX, z = 0)
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overhead.glb', function(model) {
-  model.scale.setScalar(4);
-  model.position.set(TRACK_RX, 5, 0);
-  model.rotation.y = Math.PI / 2;
+// ---- Pits garage (right side of start straight) ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/pitsGarage.glb', function(model) {
+  model.scale.setScalar(3);
+  model.position.copy(trkPt(0, -(TRACK_W / 2 + 15)));
+  model.rotation.y = trkFacing(0, Math.PI / 2);
   scene.add(model);
 });
 
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/overheadLights.glb', function(model) {
-  model.scale.setScalar(4);
-  model.position.set(TRACK_RX, 5, 0);
-  model.rotation.y = Math.PI / 2;
-  scene.add(model);
-});
-
-// 2. Billboards: 3 around the outer ellipse at 0°, 90°, 180°
-const BILLBOARD_RX = FENCE_RX + 5;
-const BILLBOARD_RZ = FENCE_RZ + 5;
-const billboardAngles = [0, Math.PI / 2, Math.PI];
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/billboard.glb', function(bbTemplate) {
-  billboardAngles.forEach(function(t) {
-    const bb = bbTemplate.clone();
+// ---- Billboards around track ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/billboard.glb', function(tmpl) {
+  [0.12, 0.35, 0.60, 0.83].forEach(function(t) {
+    const bb = tmpl.clone();
     bb.scale.setScalar(3);
-    bb.position.set(BILLBOARD_RX * Math.cos(t), 0, BILLBOARD_RZ * Math.sin(t));
-    bb.rotation.y = Math.atan2(-BILLBOARD_RX * Math.sin(t), BILLBOARD_RZ * Math.cos(t));
+    bb.position.copy(trkPt(t, TRACK_W / 2 + 8));
+    bb.rotation.y = trkFacing(t, -Math.PI / 2);
     scene.add(bb);
   });
 });
 
-// 3. Banner towers near grandstands (x = ±45, z = ±(GS_Z_OFFSET - 5))
-const bannerTowerPositions = [
-  { x:  45, z: -(GS_Z_OFFSET - 5), ry: 0 },
-  { x: -45, z: -(GS_Z_OFFSET - 5), ry: 0 },
-  { x:  45, z:  (GS_Z_OFFSET - 5), ry: Math.PI },
-  { x: -45, z:  (GS_Z_OFFSET - 5), ry: Math.PI },
-];
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/bannerTowerGreen.glb', function(towerTemplate) {
-  bannerTowerPositions.forEach(function(p) {
-    const tower = towerTemplate.clone();
+// ---- Barrier wall at hairpin inner apex ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/barrierWall.glb', function(tmpl) {
+  for (let i = 0; i < 6; i++) {
+    const t    = 0.60 + i * 0.014;
+    const wall = tmpl.clone();
+    wall.scale.setScalar(2);
+    wall.position.copy(trkPt(t, -(TRACK_W / 2 + 4)));
+    wall.rotation.y = trkFacing(t);
+    scene.add(wall);
+  }
+});
+
+// ---- Banner towers ----
+loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/bannerTowerGreen.glb', function(tmpl) {
+  [0.25, 0.50, 0.75].forEach(function(t) {
+    const tower = tmpl.clone();
     tower.scale.setScalar(3);
-    tower.position.set(p.x, 0, p.z);
-    tower.rotation.y = p.ry;
+    tower.position.copy(trkPt(t, TRACK_W / 2 + 28));
+    tower.rotation.y = trkFacing(t);
     scene.add(tower);
   });
 });
 
-// 4. Small trees: 10 trees interleaved between large trees (same ellipse, offset 2 units inward)
-const SMALL_TREE_RX = TREE_RX - 2;
-const SMALL_TREE_RZ = TREE_RZ - 2;
-loadGLB('assets/kenney_racing-kit/Models/GLTF%20format/treeSmall.glb', function(smallTreeTemplate) {
-  for (let i = 0; i < 10; i++) {
-    // Offset by half a step to interleave with large trees
-    const t = ((i + 0.5) / 10) * Math.PI * 2;
-    const st = smallTreeTemplate.clone();
-    st.scale.setScalar(2.5);
-    st.position.set(SMALL_TREE_RX * Math.cos(t), 0, SMALL_TREE_RZ * Math.sin(t));
-    scene.add(st);
-  }
-});
-
 // ---- Physics state ----
+const _st0 = trackCurve.getTangent(0);
 const car = {
-  x: TRACK_RX,
-  z: 0,
-  angle: Math.PI / 2,   // heading: 0=+X axis
-  vx: 0,                // world-space velocity
-  vz: 0,
+  x:          60,
+  z:          0,
+  angle:      Math.atan2(-_st0.z, _st0.x),  // heading matching curve direction
+  vx:         0,
+  vz:         0,
   angularVel: 0,
-  driftFactor: 0,       // 0=grip, 1=full slide
-  drifting: false,
-  onTrack: true,
+  driftFactor: 0,
+  drifting:   false,
+  onTrack:    true,
 };
 
 // Tuning
@@ -465,128 +483,119 @@ const ACCEL_FORCE   = 0.06;
 const BRAKE_FORCE   = 0.12;
 const HANDBRAKE_F   = 0.04;
 const MAX_SPEED     = 1.4;
-const GRIP_FRIC     = 0.94;   // longitudinal friction on track
+const GRIP_FRIC     = 0.94;
 const GRASS_FRIC    = 0.80;
-const GRIP_LAT      = 0.18;   // lateral grip (fraction of lat vel removed per frame)
-const DRIFT_LAT     = 0.015;  // lateral grip while drifting
+const GRIP_LAT      = 0.18;
+const DRIFT_LAT     = 0.015;
 const TURN_BASE     = 0.055;
 const TURN_DRIFT    = 0.072;
 const ANG_DAMP      = 0.78;
 const DRIFT_BUILDUP = 0.12;
 const DRIFT_DECAY   = 0.08;
 
-function isOnTrack(x, z) {
-  const ni = (x/(TRACK_RX-TRACK_W/2))**2 + (z/(TRACK_RZ-TRACK_W/2))**2;
-  const no = (x/(TRACK_RX+TRACK_W/2))**2 + (z/(TRACK_RZ+TRACK_W/2))**2;
-  return no <= 1 && ni >= 1;
+// ---- Curve-based collision detection ----
+let playerNearestT       = 0;
+let playerDistFromCenter = 0;
+
+function findNearestT(x, z, cachedT) {
+  let bestT = cachedT, bestD2 = Infinity;
+  const STEPS = 40, RANGE = 0.12;
+  for (let i = -STEPS; i <= STEPS; i++) {
+    const t  = ((cachedT + i * RANGE / STEPS) % 1 + 1) % 1;
+    const pt = trackCurve.getPoint(t);
+    const dx = x - pt.x, dz = z - pt.z;
+    const d2 = dx*dx + dz*dz;
+    if (d2 < bestD2) { bestD2 = d2; bestT = t; }
+  }
+  return { t: bestT, dist: Math.sqrt(bestD2) };
 }
 
-// ---- Boundary collision ----
-// Push car back onto track and reflect velocity when it crosses the edge.
-// Returns true if a collision was resolved.
+function isOnTrack(x, z) {
+  const { t, dist } = findNearestT(x, z, playerNearestT);
+  playerNearestT       = t;
+  playerDistFromCenter = dist;
+  return dist < TRACK_W / 2 + 1;
+}
+
 function resolveTrackBoundary() {
-  const outerRX = TRACK_RX + TRACK_W / 2;
-  const outerRZ = TRACK_RZ + TRACK_W / 2;
-  const innerRX = TRACK_RX - TRACK_W / 2;
-  const innerRZ = TRACK_RZ - TRACK_W / 2;
+  // Re-evaluate at post-integration position
+  const { t, dist } = findNearestT(car.x, car.z, playerNearestT);
+  playerNearestT       = t;
+  playerDistFromCenter = dist;
+  if (dist <= TRACK_W / 2) return false;
 
-  const no = (car.x / outerRX)**2 + (car.z / outerRZ)**2;
-  const ni = (car.x / innerRX)**2 + (car.z / innerRZ)**2;
+  const pt  = trackCurve.getPoint(t);
+  const tan = trackCurve.getTangent(t);
+  const nx  = -tan.z, nz = tan.x;
+  const dx  = car.x - pt.x, dz = car.z - pt.z;
+  const side = (dx * nx + dz * nz) >= 0 ? 1 : -1;
 
-  let hit = false;
+  // Push back to just inside the edge
+  car.x = pt.x + nx * side * (TRACK_W / 2 - 0.1);
+  car.z = pt.z + nz * side * (TRACK_W / 2 - 0.1);
 
-  if (no > 1) {
-    // Outside outer wall — find nearest point on outer ellipse and push in
-    const t = Math.atan2(car.z / outerRZ, car.x / outerRX);
-    const nx = outerRX * Math.cos(t);
-    const nz = outerRZ * Math.sin(t);
-    // Normal pointing inward
-    const nnx = -Math.cos(t), nnz = -Math.sin(t);
-    car.x = nx + nnx * 0.1;
-    car.z = nz + nnz * 0.1;
-    // Reflect velocity along normal and damp
-    const dot = car.vx * nnx + car.vz * nnz;
-    if (dot < 0) {
-      car.vx -= 2 * dot * nnx;
-      car.vz -= 2 * dot * nnz;
-    }
-    car.vx *= 0.35; car.vz *= 0.35;
-    shakeTimer = 18; shakeAmt = 0.45;
-    hit = true;
-  } else if (ni < 1) {
-    // Inside inner wall
-    const t = Math.atan2(car.z / innerRZ, car.x / innerRX);
-    const nx = innerRX * Math.cos(t);
-    const nz = innerRZ * Math.sin(t);
-    const nnx = Math.cos(t), nnz = Math.sin(t); // normal pointing outward
-    car.x = nx + nnx * 0.1;
-    car.z = nz + nnz * 0.1;
-    const dot = car.vx * nnx + car.vz * nnz;
-    if (dot < 0) {
-      car.vx -= 2 * dot * nnx;
-      car.vz -= 2 * dot * nnz;
-    }
-    car.vx *= 0.35; car.vz *= 0.35;
-    shakeTimer = 18; shakeAmt = 0.45;
-    hit = true;
+  // Inward-pointing normal (toward track centre from this wall)
+  const nnx = -side * nx, nnz = -side * nz;
+  const dot = car.vx * nnx + car.vz * nnz;
+  if (dot < 0) {   // velocity has outward component → reflect
+    car.vx -= 2 * dot * nnx;
+    car.vz -= 2 * dot * nnz;
   }
-
-  return hit;
+  car.vx *= 0.35; car.vz *= 0.35;
+  shakeTimer = 18; shakeAmt = 0.45;
+  return true;
 }
 
 // ---- Checkpoint + lap system ----
-// 4 checkpoints evenly around the ellipse, starting just past the S/F line.
-// S/F line is at angle=0 (car.x = TRACK_RX, car.z = 0).
-const CP_ANGLES = [Math.PI/2, Math.PI, 3*Math.PI/2, 0]; // quarter, half, 3/4, finish
-const CP_RADIUS = 8; // distance threshold to "hit" a checkpoint
+// t-values around the curve; last entry (0.0) is the start/finish line.
+const CP_T_VALUES = [0.25, 0.5, 0.75, 0.0];
+const CP_RADIUS   = 8;
 
 const lapState = {
-  lap: 0,          // completed laps
-  maxLaps: 3,
-  nextCp: 0,       // index into CP_ANGLES — next checkpoint to hit
-  lapStart: 0,     // performance.now() at start of current lap
-  bestLap: null,   // ms
-  lastLap: null,
-  finished: false,
-  // Flash message
-  flash: '',
+  lap:       0,
+  maxLaps:   3,
+  nextCp:    0,
+  lapStart:  0,
+  bestLap:   null,
+  lastLap:   null,
+  finished:  false,
+  flash:     '',
   flashTimer: 0,
 };
 
-function cpWorld(angle) {
-  return { x: TRACK_RX * Math.cos(angle), z: TRACK_RZ * Math.sin(angle) };
+function cpWorld(t) {
+  const pt = trackCurve.getPoint(t);
+  return { x: pt.x, z: pt.z };
 }
 
 function updateLap() {
   if (lapState.finished) return;
 
-  const cp = cpWorld(CP_ANGLES[lapState.nextCp]);
+  const cp = cpWorld(CP_T_VALUES[lapState.nextCp]);
   const dx = car.x - cp.x, dz = car.z - cp.z;
   if (dx*dx + dz*dz < CP_RADIUS * CP_RADIUS) {
-    if (lapState.nextCp === CP_ANGLES.length - 1) {
-      // Crossed S/F line — completed a lap
+    if (lapState.nextCp === CP_T_VALUES.length - 1) {
       const now = performance.now();
       if (lapState.lapStart > 0) {
         const lapTime = now - lapState.lapStart;
         lapState.lastLap = lapTime;
         if (lapState.bestLap === null || lapTime < lapState.bestLap) {
-          lapState.bestLap = lapTime;
-          lapState.flash = 'BEST LAP!';
+          lapState.bestLap  = lapTime;
+          lapState.flash     = 'BEST LAP!';
           lapState.flashTimer = 180;
         }
         lapState.lap++;
         if (lapState.lap >= lapState.maxLaps) {
-          lapState.finished = true;
-          lapState.flash = 'FINISHED!';
+          lapState.finished  = true;
+          lapState.flash     = 'FINISHED!';
           lapState.flashTimer = 9999;
         }
       } else {
-        // First time crossing S/F — start timing
         lapState.lap = 1;
       }
       lapState.lapStart = now;
     }
-    lapState.nextCp = (lapState.nextCp + 1) % CP_ANGLES.length;
+    lapState.nextCp = (lapState.nextCp + 1) % CP_T_VALUES.length;
   }
 
   if (lapState.flashTimer > 0) lapState.flashTimer--;
@@ -594,8 +603,8 @@ function updateLap() {
 
 // ---- Tire marks ----
 const MARK_MAX = 2000;
-const markPositions = [];   // {x,z} pairs queued
-const markGeo = new THREE.BufferGeometry();
+const markPositions = [];
+const markGeo  = new THREE.BufferGeometry();
 const markVerts = new Float32Array(MARK_MAX * 3);
 markGeo.setAttribute('position', new THREE.BufferAttribute(markVerts, 3));
 markGeo.setDrawRange(0, 0);
@@ -608,10 +617,9 @@ let prevMarkL = null, prevMarkR = null;
 
 function addTireMarks(x, z, angle) {
   const cosA = Math.cos(angle), sinA = Math.sin(angle);
-  // rear-axle offset
-  const rx = x - cosA * 1.5, rz = z + sinA * 1.5;
-  const lx = rx - sinA * 1.0, lz = rz - cosA * 1.0; // left
-  const rrx = rx + sinA * 1.0, rrz = rz + cosA * 1.0; // right
+  const rx  = x - cosA * 1.5, rz = z + sinA * 1.5;
+  const lx  = rx - sinA * 1.0, lz  = rz - cosA * 1.0;
+  const rrx = rx + sinA * 1.0, rrz = rz + cosA * 1.0;
 
   function addSeg(prev, cx, cz) {
     if (prev && markCount + 2 <= MARK_MAX) {
@@ -632,18 +640,17 @@ function addTireMarks(x, z, angle) {
 const SMOKE_MAX = 600;
 const smokeData = {
   pos:  new Float32Array(SMOKE_MAX * 3),
-  vel:  new Float32Array(SMOKE_MAX * 3), // world-space drift
-  life: new Float32Array(SMOKE_MAX),     // 0=dead, 1=fresh
+  vel:  new Float32Array(SMOKE_MAX * 3),
+  life: new Float32Array(SMOKE_MAX),
   count: 0,
-  head: 0,  // ring-buffer head
+  head: 0,
 };
-const smokeGeo = new THREE.BufferGeometry();
+const smokeGeo     = new THREE.BufferGeometry();
 const smokePosAttr = new THREE.BufferAttribute(smokeData.pos, 3);
 smokePosAttr.setUsage(THREE.DynamicDrawUsage);
 smokeGeo.setAttribute('position', smokePosAttr);
 smokeGeo.setDrawRange(0, 0);
 
-// Canvas sprite for smoke puff
 const sc = document.createElement('canvas'); sc.width = sc.height = 64;
 const sctx = sc.getContext('2d');
 const sg = sctx.createRadialGradient(32,32,2,32,32,30);
@@ -661,9 +668,7 @@ scene.add(smokePoints);
 
 function spawnSmoke(x, y, z) {
   const i = smokeData.head % SMOKE_MAX;
-  smokeData.pos[i*3]   = x;
-  smokeData.pos[i*3+1] = y;
-  smokeData.pos[i*3+2] = z;
+  smokeData.pos[i*3]   = x; smokeData.pos[i*3+1] = y; smokeData.pos[i*3+2] = z;
   smokeData.vel[i*3]   = (Math.random()-0.5)*0.03;
   smokeData.vel[i*3+1] = 0.02 + Math.random()*0.03;
   smokeData.vel[i*3+2] = (Math.random()-0.5)*0.03;
@@ -673,14 +678,12 @@ function spawnSmoke(x, y, z) {
 }
 
 function updateSmoke() {
-  let alive = 0;
   for (let i = 0; i < SMOKE_MAX; i++) {
     if (smokeData.life[i] <= 0) continue;
-    smokeData.life[i] -= 0.018;
+    smokeData.life[i]    -= 0.018;
     smokeData.pos[i*3]   += smokeData.vel[i*3];
     smokeData.pos[i*3+1] += smokeData.vel[i*3+1];
     smokeData.pos[i*3+2] += smokeData.vel[i*3+2];
-    alive++;
   }
   smokePosAttr.needsUpdate = true;
   smokeGeo.setDrawRange(0, SMOKE_MAX);
@@ -688,20 +691,18 @@ function updateSmoke() {
 }
 
 // ---- Game state machine ----
-// 'intro' → 'countdown' → 'racing' → 'finished'
-let gameState = 'intro';
+let gameState      = 'intro';
 let countdownStart = 0;
 let raceStartTime  = 0;
 let totalRaceTime  = 0;
 
 function startCountdown() {
   if (gameState !== 'intro') return;
-  gameState = 'countdown';
+  gameState      = 'countdown';
   countdownStart = performance.now();
 }
 
 function getCountdownPhase() {
-  // returns { label, color, done } where done=true means GO phase finished
   const elapsed = performance.now() - countdownStart;
   if (elapsed < 1000) return { label: '3', color: '#ffffff', elapsed };
   if (elapsed < 2000) return { label: '2', color: '#ffaa00', elapsed };
@@ -724,8 +725,8 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // ---- Camera ----
-let camPos    = new THREE.Vector3(TRACK_RX - 14, 6, 0);
-let camTarget = new THREE.Vector3(TRACK_RX, 0.5, 4);
+let camPos    = new THREE.Vector3(46, 6, 0);
+let camTarget = new THREE.Vector3(60, 0.5, 4);
 camera.position.copy(camPos);
 camera.lookAt(camTarget);
 
@@ -757,32 +758,26 @@ function getGear(kmh) {
 
 // ---- Speedometer (circular, bottom-left) ----
 function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
-  const startA = Math.PI * 0.75;   // 135°
-  const endA   = Math.PI * 2.25;   // 405° (= 45°) → 270° arc
+  const startA = Math.PI * 0.75;
+  const endA   = Math.PI * 2.25;
   const maxKmh = 280;
   const ratio  = Math.min(kmh / maxKmh, 1);
   const needleA = startA + ratio * (endA - startA);
 
-  // Outer ring background
   hctx.save();
   hctx.beginPath();
   hctx.arc(cx, cy, radius, 0, Math.PI * 2);
   hctx.fillStyle = 'rgba(0,0,0,0.75)';
   hctx.fill();
 
-  // Coloured arc (green → yellow → red)
-  const grad = hctx.createConicalGradient
-    ? null   // not standard; use segment approach
-    : null;
   const arcW = radius * 0.14;
   hctx.lineWidth = arcW;
   hctx.lineCap   = 'round';
-  // bg track
   hctx.beginPath();
   hctx.arc(cx, cy, radius - arcW / 2, startA, endA);
   hctx.strokeStyle = 'rgba(255,255,255,0.08)';
   hctx.stroke();
-  // filled portion — 3 colour segments
+
   const seg1End = startA + 0.55 * (endA - startA);
   const seg2End = startA + 0.82 * (endA - startA);
   function arcSeg(from, to, color) {
@@ -796,10 +791,9 @@ function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
   arcSeg(seg1End, seg2End, '#ffea00');
   arcSeg(seg2End, endA,    '#ff1744');
 
-  // Tick marks
   hctx.lineWidth = 2;
   for (let i = 0; i <= 14; i++) {
-    const a = startA + (i / 14) * (endA - startA);
+    const a     = startA + (i / 14) * (endA - startA);
     const inner = i % 7 === 0 ? radius * 0.70 : (i % 2 === 0 ? radius * 0.76 : radius * 0.80);
     const outer = radius * 0.86;
     hctx.beginPath();
@@ -809,7 +803,6 @@ function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
     hctx.stroke();
   }
 
-  // Needle
   hctx.save();
   hctx.translate(cx, cy);
   hctx.rotate(needleA);
@@ -822,13 +815,11 @@ function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
   hctx.stroke();
   hctx.restore();
 
-  // Centre dot
   hctx.beginPath();
   hctx.arc(cx, cy, radius * 0.06, 0, Math.PI * 2);
   hctx.fillStyle = '#fff';
   hctx.fill();
 
-  // Speed number
   hctx.textAlign = 'center';
   hctx.font = `bold ${Math.round(radius * 0.30)}px monospace`;
   hctx.fillStyle = '#fff';
@@ -837,7 +828,6 @@ function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
   hctx.fillStyle = '#aaa';
   hctx.fillText('km/h', cx, cy + radius * 0.36);
 
-  // Gear box (right of centre)
   const gx = cx + radius * 0.35, gy = cy - radius * 0.18;
   hctx.font = `bold ${Math.round(radius * 0.36)}px monospace`;
   hctx.fillStyle = drifting ? '#ffea00' : '#00e5ff';
@@ -846,7 +836,6 @@ function drawSpeedometer(cx, cy, radius, kmh, gear, drifting, driftAngleDeg) {
   hctx.fillStyle = '#888';
   hctx.fillText('GEAR', gx, gy + radius * 0.22);
 
-  // Drift angle (above speedometer)
   if (drifting && driftAngleDeg > 2) {
     hctx.font = `bold ${Math.round(radius * 0.22)}px monospace`;
     hctx.fillStyle = `rgba(255,220,0,${0.7 + 0.3 * Math.sin(Date.now()/80)})`;
@@ -867,11 +856,9 @@ function drawIntro() {
   const W = hud.width, H = hud.height;
   hctx.save();
 
-  // Dark overlay
   hctx.fillStyle = 'rgba(0,0,0,0.72)';
   hctx.fillRect(0, 0, W, H);
 
-  // Title
   hctx.textAlign = 'center';
   hctx.font = 'bold 72px monospace';
   hctx.fillStyle = '#e10600';
@@ -884,7 +871,6 @@ function drawIntro() {
   hctx.fillStyle = '#aaa';
   hctx.fillText('F1 Style Racing', W/2, H/2 - 90);
 
-  // Controls box
   const bw = 360, bh = 170, bx = W/2 - bw/2, by = H/2 - 60;
   hctx.fillStyle = 'rgba(255,255,255,0.06)';
   hctx.strokeStyle = 'rgba(255,255,255,0.15)';
@@ -897,6 +883,7 @@ function drawIntro() {
     ['S / ↓',       'Brake / Reverse'],
     ['A / ← D / →', 'Steer'],
     ['Space',        'Handbrake (drift)'],
+    ['Enter',        'Start Race'],
   ];
   hctx.font = '15px monospace';
   controls.forEach(([key, desc], i) => {
@@ -909,7 +896,6 @@ function drawIntro() {
     hctx.fillText(desc, W/2 + 14, y);
   });
 
-  // ENTER prompt (pulsing)
   const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
   hctx.textAlign = 'center';
   hctx.font = 'bold 22px monospace';
@@ -926,19 +912,16 @@ function drawCountdown() {
   const W = hud.width, H = hud.height;
 
   hctx.save();
-  hctx.textAlign = 'center';
+  hctx.textAlign    = 'center';
   hctx.textBaseline = 'middle';
 
-  // Pulse: scale shrinks 1.4→1.0 over each 1s window
-  const phase  = (cd.elapsed % 1000) / 1000;
-  const scale  = cd.label === 'GO!' ? 1.0 + (1 - phase) * 0.4 : 1.4 - phase * 0.4;
-  const fsize  = Math.round(120 * scale);
+  const phase = (cd.elapsed % 1000) / 1000;
+  const scale = cd.label === 'GO!' ? 1.0 + (1 - phase) * 0.4 : 1.4 - phase * 0.4;
+  const fsize = Math.round(120 * scale);
 
-  // Shadow
   hctx.font = `bold ${fsize}px monospace`;
   hctx.fillStyle = 'rgba(0,0,0,0.4)';
   hctx.fillText(cd.label, W/2 + 5, H/2 + 5);
-  // Main
   hctx.fillStyle = cd.color;
   hctx.shadowColor = cd.color;
   hctx.shadowBlur = 50;
@@ -994,14 +977,12 @@ function drawFinishScreen() {
 function drawRacingHud(kmh, gear, drifting, driftAngleDeg) {
   const W = hud.width, H = hud.height;
 
-  // Speedometer — bottom-left
   const sR = 80;
   drawSpeedometer(sR + 20, H - sR - 20, sR, kmh, gear, drifting, driftAngleDeg);
 
-  // Lap panel — top-right
-  const now = performance.now();
+  const now          = performance.now();
   const currentLapMs = lapState.lapStart > 0 ? now - lapState.lapStart : 0;
-  const lapLabel = lapState.finished ? 'FINISHED' : `LAP ${lapState.lap}/${lapState.maxLaps}`;
+  const lapLabel     = lapState.finished ? 'FINISHED' : `LAP ${lapState.lap}/${lapState.maxLaps}`;
   const lx = W - 250;
 
   hctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -1017,10 +998,9 @@ function drawRacingHud(kmh, gear, drifting, driftAngleDeg) {
   hctx.fillStyle = '#00e676';
   hctx.fillText(`Best:    ${fmtTime(lapState.bestLap)}`, lx + 12, 96);
 
-  // Checkpoint dots
   hctx.fillStyle = 'rgba(0,0,0,0.5)';
   hctx.fillRect(lx, 114, 240, 22);
-  for (let i = 0; i < CP_ANGLES.length; i++) {
+  for (let i = 0; i < CP_T_VALUES.length; i++) {
     const passed = i < lapState.nextCp;
     hctx.beginPath();
     hctx.arc(lx + 25 + i * 55, 125, 7, 0, Math.PI * 2);
@@ -1031,7 +1011,6 @@ function drawRacingHud(kmh, gear, drifting, driftAngleDeg) {
     hctx.stroke();
   }
 
-  // Off-track warning
   if (!car.onTrack) {
     hctx.save();
     hctx.textAlign = 'center';
@@ -1041,7 +1020,6 @@ function drawRacingHud(kmh, gear, drifting, driftAngleDeg) {
     hctx.restore();
   }
 
-  // Flash message (BEST LAP)
   if (lapState.flashTimer > 0 && !lapState.finished) {
     const alpha = Math.min(1, lapState.flashTimer / 40);
     hctx.save();
@@ -1069,7 +1047,6 @@ function drawHud() {
   const kmh = spd * 60 * 3.6 * 4;
   const gear = getGear(kmh);
 
-  // Drift angle: angle between velocity vector and car heading
   const velAngle  = Math.atan2(-car.vz, car.vx);
   const angleDiff = Math.abs(((velAngle - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
   const driftDeg  = (angleDiff * 180 / Math.PI);
@@ -1081,25 +1058,22 @@ function drawHud() {
 
 // ---- Update ----
 function update() {
-  // Advance countdown → racing
   if (gameState === 'countdown') {
     const cd = getCountdownPhase();
     if (cd.done) {
-      gameState = 'racing';
+      gameState     = 'racing';
       raceStartTime = performance.now();
       lapState.lapStart = raceStartTime;
-      lapState.lap = 1;
+      lapState.lap  = 1;
     }
   }
 
-  // Freeze physics when not racing
   if (gameState !== 'racing') {
-    // Still update camera to orbit gently around start
-    const t = performance.now() / 4000;
-    const orbitX = TRACK_RX + Math.cos(t) * 20;
+    const t      = performance.now() / 4000;
+    const orbitX = 60 + Math.cos(t) * 20;
     const orbitZ = Math.sin(t) * 14;
     camPos.lerp(new THREE.Vector3(orbitX, 8, orbitZ), 0.02);
-    camTarget.lerp(new THREE.Vector3(TRACK_RX, 0, 0), 0.05);
+    camTarget.lerp(new THREE.Vector3(60, 0, 0), 0.05);
     camera.position.copy(camPos);
     camera.lookAt(camTarget);
     return;
@@ -1123,8 +1097,7 @@ function update() {
   const cosA = Math.cos(car.angle);
   const sinA = Math.sin(car.angle);
 
-  // Forward component of velocity
-  const fwdVel = car.vx * cosA - car.vz * sinA;  // note: z is inverted in world
+  const fwdVel = car.vx * cosA - car.vz * sinA;
 
   // ---- Drift factor ----
   const wantDrift = handbrake && spd > 0.15;
@@ -1136,7 +1109,7 @@ function update() {
     car.drifting = car.driftFactor > 0.05;
   }
 
-  // ---- Steering — speed-sensitive ----
+  // ---- Steering ----
   const speedNorm  = Math.min(spd / MAX_SPEED, 1);
   const steerScale = car.drifting
     ? TURN_DRIFT
@@ -1148,7 +1121,6 @@ function update() {
     if (right) car.angularVel -= steerScale * dir;
   }
   car.angularVel *= ANG_DAMP;
-  // Extra oversteer: angularVel grows with drift
   car.angle += car.angularVel * (1 + car.driftFactor * 0.8);
 
   // ---- Acceleration ----
@@ -1157,28 +1129,23 @@ function update() {
     car.vz -= sinA * ACCEL_FORCE;
   }
 
-  // ---- Brake (S key) vs handbrake (Space) ----
+  // ---- Brake / Reverse ----
   if (down) {
     if (fwdVel > 0.05) {
-      // Progressive brake
       car.vx -= cosA * BRAKE_FORCE;
       car.vz += sinA * BRAKE_FORCE;
     } else if (fwdVel > -MAX_SPEED * 0.3) {
-      // Reverse
       car.vx -= cosA * ACCEL_FORCE * 0.5;
       car.vz += sinA * ACCEL_FORCE * 0.5;
     }
   }
   if (handbrake && spd > 0.01) {
-    // Handbrake: cut forward momentum sharply
     car.vx -= cosA * HANDBRAKE_F * Math.sign(fwdVel);
     car.vz += sinA * HANDBRAKE_F * Math.sign(fwdVel);
   }
 
   // ---- Lateral grip ----
-  // Lateral axis (perpendicular to heading)
-  const latX =  sinA;
-  const latZ =  cosA;
+  const latX   =  sinA, latZ = cosA;
   const latVel = car.vx * latX + car.vz * latZ;
   const latGrip = car.drifting
     ? DRIFT_LAT + (1 - car.driftFactor) * (GRIP_LAT - DRIFT_LAT)
@@ -1215,7 +1182,7 @@ function update() {
     prevMarkR = null;
   }
 
-  // ---- Smoke particles (drift rear wheels) ----
+  // ---- Smoke particles ----
   if (car.drifting && spd > 0.12) {
     const rearX = car.x - cosA * 1.8;
     const rearZ = car.z + sinA * 1.8;
@@ -1229,7 +1196,7 @@ function update() {
   }
   updateSmoke();
 
-  // ---- Exhaust flash (low-speed acceleration = launch) ----
+  // ---- Exhaust flash ----
   const launching = up && spd < 0.25 && fwdVel < 0.2;
   exhaustLight.intensity = launching
     ? 2.5 + Math.random() * 1.5
